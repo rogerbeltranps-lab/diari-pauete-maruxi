@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Diari de Pauete i Maruxi</title>
-<meta name="theme-color" content="#2f4c74">
+<meta name="theme-color" content="#f7efe4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Diari">
@@ -20,24 +20,42 @@
 <meta name="msapplication-config" content="browserconfig.xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Figtree:wght@400;500;600&family=Gloock&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Gloock&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<header class="bar" id="bar" hidden><div class="bar-in">
-  <div class="brand" id="brand">Diari de Pauete i Maruxi</div>
-  <label class="sel"><span class="vh">Què vols veure</span><select id="f-group"></select></label>
-  <button class="btn primary" id="b-new" type="button">+ Nova entrada</button>
-  <button class="btn" id="b-print" type="button">Imprimir</button>
-  <button class="btn" id="b-more" type="button" aria-label="Més opcions">Més…</button>
+<header class="bar" id="bar" hidden>
+  <div class="brand">
+    <img class="logo" src="icon-192.png" srcset="icon-192.png 1x, icon-512.png 2x" alt="">
+    <div class="brand-t">
+      <div class="brand-name" id="brand">Diari de Pauete i Maruxi</div>
+      <div class="tag">Petits moments, grans records <svg class="heart" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg></div>
+    </div>
+  </div>
+  <div class="bar-r">
+    <label class="search"><span class="vh">Busca</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+      <input type="search" id="f-search" placeholder="Busca entrades, moments, llocs…" autocomplete="off"></label>
+    <button class="btn primary" id="b-new" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Nova entrada</button>
+  </div>
   <input class="hid" type="file" id="f-docx" multiple accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
-</div></header>
+</header>
 
-<main id="main">
-  <section class="screen" id="s-loading"><p class="muted">Obrint el diari…</p></section>
-  <div class="book" id="book" hidden></div>
-</main>
+<section class="screen" id="s-loading"><p class="muted">Obrint el diari…</p></section>
+
+<div class="layout" id="layout" hidden>
+  <nav class="side" aria-label="Capítols">
+    <div class="nav" id="nav"></div>
+    <div class="nav nav-tools">
+      <button class="nav-i" id="b-print" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 9V3h10v6M7 17H4v-7h16v7h-3M7 14h10v7H7z"/></svg><span>Imprimir o PDF</span></button>
+      <button class="nav-i" id="b-more" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg><span>Més opcions</span></button>
+    </div>
+    <div class="quote" aria-hidden="true">La vida també es fa<br>de petits moments <svg class="heart" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg></div>
+  </nav>
+  <section class="list" id="list" aria-label="Entrades"></section>
+  <main id="main"><div class="book" id="book"></div></main>
+</div>
 
 <div class="ov" id="ov" hidden><div class="card" id="card"></div></div>
 <div class="toast" id="toast" hidden></div>

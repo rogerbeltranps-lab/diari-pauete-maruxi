@@ -390,19 +390,68 @@ function pageHTML(p, num, ents) {
 
 /* ================= render ================= */
 const book = $('#book');
+const listEl = $('#list');
 function showScreen(html) {
-  const s = $('#s-loading'); s.innerHTML = html; s.hidden = false; book.hidden = true;
+  const s = $('#s-loading'); s.innerHTML = html; s.hidden = false; $('#layout').hidden = true;
 }
-function renderGroupSelect() {
-  const gs = groupsOf(data.entries), sel = $('#f-group');
+const ICON = {
+  book: '<path d="M4 5.5C6.5 4 9.5 4 12 6c2.5-2 5.5-2 8-.5V19c-2.5-1.5-5.5-1.5-8 .5-2.5-2-5.5-2-8-.5z"/><path d="M12 6v13.5"/>',
+  leaf: '<path d="M5 19C5 10 10 5 20 4c0 10-5 15-14 15"/><path d="M5 19 13 11"/>',
+  home: '<path d="M4 11 12 4l8 7v9h-5v-6H9v6H4z"/>'
+};
+const svg = k => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>`;
+function renderNav() {
+  const gs = groupsOf(data.entries), nav = $('#nav');
   if (group !== 'all' && !gs.some(g => g.key === group)) group = 'all';
-  sel.innerHTML = `<option value="all">Tot el llibre</option>` + gs.map(g => `<option value="${esc(g.key)}">${esc(g.title)}</option>`).join('');
-  sel.value = group; sel.parentElement.hidden = gs.length < 2;
+  const days = es => es.filter(e => !e.chapter).length;
+  const item = (key, title, icon, n) => `<button class="nav-i${group === key ? ' on' : ''}" type="button" data-act="group" data-g="${esc(key)}"${group === key ? ' aria-current="true"' : ''}>${svg(icon)}<span>${esc(title)}</span>${n != null ? `<small>${n}</small>` : ''}</button>`;
+  nav.innerHTML = item('all', 'Tot el llibre', 'book', days(data.entries)) + (gs.length > 1 ? gs.map(g => item(g.key, g.title, g.key === 'inici' ? 'home' : 'leaf', days(g.entries))).join('') : '');
+}
+/* entry list (middle column): click jumps to the entry's page */
+const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const excerpt = e => { const t = (e.paras || []).join(' '); return t.length > 130 ? t.slice(0, 127).replace(/\s+\S*$/, '') + '…' : t };
+function renderList() {
+  const q = norm($('#f-search').value.trim());
+  const ents = q ? data.entries.filter(e => norm([e.date, e.title, ...(e.paras || [])].join(' ')).includes(q)) : selectedEntries();
+  const g = groupsOf(data.entries).find(g => g.key === group);
+  const head = q ? 'Resultats' : group === 'all' ? 'Tot el llibre' : (g ? g.title : 'Tot el llibre');
+  const nDays = ents.filter(e => !e.chapter).length;
+  listEl.innerHTML = `<div class="list-h"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></svg><h2>${esc(head)}</h2><span>${nDays} ${nDays === 1 ? 'dia' : 'dies'}</span></div>`
+    + (ents.length ? ents.map(e => {
+      if (e.chapter) return `<button class="li-ch" type="button" data-act="goto" data-id="${e.id}">${esc(e.title || 'Capítol')}</button>`;
+      const ph = (e.photos || [])[0];
+      return `<button class="li" type="button" data-act="goto" data-id="${e.id}">
+        <span class="li-img">${ph ? imgTag(ph) : svg('leaf')}</span>
+        <span class="li-t">${e.title && e.date ? `<span class="li-d">${esc(e.date)}</span>` : ''}<span class="li-h">${esc(e.title || e.date || 'Sense títol')}</span><span class="li-x">${esc(excerpt(e))}</span></span></button>`;
+    }).join('') : `<p class="muted li-none">${q ? 'No hi ha cap entrada amb aquestes paraules.' : 'Encara no hi ha entrades.'}</p>`);
+  listEl.querySelectorAll('img[data-pid]').forEach(img => { if (mem.has(img.dataset.pid)) loadImg(img); else io.observe(img) });
+  markActive(activeId);
+}
+let activeId = null;
+function markActive(id) {
+  activeId = id;
+  listEl.querySelectorAll('[data-act=goto].on').forEach(b => b.classList.remove('on'));
+  const b = id && listEl.querySelector(`[data-act=goto][data-id="${id}"]`); if (!b) return;
+  b.classList.add('on');
+  if (listEl.scrollHeight > listEl.clientHeight) {
+    const top = b.offsetTop, bot = top + b.offsetHeight;
+    if (top < listEl.scrollTop + 50) listEl.scrollTop = top - 50; else if (bot > listEl.scrollTop + listEl.clientHeight) listEl.scrollTop = bot - listEl.clientHeight + 12;
+  }
+}
+const seen = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) markActive(e.target.dataset.eid) }), { rootMargin: '-35% 0px -60% 0px' });
+function gotoEntry(id) {
+  let s = book.querySelector(`.sheet[data-eid="${id}"]`);
+  if (!s && group !== 'all') { group = 'all'; ls.set('diari.group', group); render(); s = book.querySelector(`.sheet[data-eid="${id}"]`) }
+  if (!s) return;
+  s.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  markActive(id);
 }
 function render() {
-  $('#bar').hidden = false; $('#s-loading').hidden = true; book.hidden = false;
-  renderGroupSelect();
+  $('#bar').hidden = false; $('#s-loading').hidden = true; $('#layout').hidden = false;
+  renderNav();
+  seen.disconnect();
   if (!data.entries.length) {
+    listEl.innerHTML = '';
     book.innerHTML = `<div class="empty"><h2>El diari és buit</h2>
       <p>Pots portar-hi el que ja teniu al Google Docs o començar amb una entrada nova.</p>
       <p class="muted">L'app llegeix el document directament del vostre Google Drive, amb totes les pestanyes i les fotos. No cal baixar res.</p>
@@ -414,9 +463,10 @@ function render() {
   book.innerHTML = pages.map((p, i) => {
     const tools = p.kind === 'cover' ? `<button data-act="cover">Edita portada</button>` :
       p.first ? `<button data-act="variant" data-id="${p.e.id}">Canvia disseny</button><button data-act="edit" data-id="${p.e.id}">Edita</button>` : '';
-    return `<div class="sheet ${p.kind === 'cover' ? 'cover' : ''}"><div class="tools">${tools}</div>${pageHTML(p, i, ents)}</div>`;
+    return `<div class="sheet ${p.kind === 'cover' ? 'cover' : ''}"${p.first ? ` data-eid="${p.e.id}"` : ''}><div class="tools">${tools}</div>${pageHTML(p, i, ents)}</div>`;
   }).join('');
-  scale(); fitText();
+  scale(); fitText(); renderList();
+  book.querySelectorAll('.sheet[data-eid]').forEach(s => seen.observe(s));
   book.querySelectorAll('img[data-pid]').forEach(img => { if (mem.has(img.dataset.pid)) loadImg(img); else io.observe(img) });
 }
 function scale() { const s = book.querySelector('.sheet'); if (s) book.style.setProperty('--s', s.clientWidth / (210 * 96 / 25.4)) }
@@ -762,7 +812,7 @@ async function finishPrint(ok) {
 $('#b-new').onclick = () => openEditor(null);
 $('#b-more').onclick = openMenu;
 $('#b-print').onclick = openPrint;
-$('#f-group').onchange = ev => { group = ev.target.value; ls.set('diari.group', group); render(); window.scrollTo(0, 0) };
+let searchT; $('#f-search').oninput = () => { clearTimeout(searchT); searchT = setTimeout(renderList, 150) };
 
 document.addEventListener('click', async ev => {
   const b = ev.target.closest('[data-act]'); if (!b) return;
@@ -770,6 +820,8 @@ document.addEventListener('click', async ev => {
   try {
     if (a === 'close') closeCard();
     else if (a === 'login') login();
+    else if (a === 'group') { group = b.dataset.g; ls.set('diari.group', group); $('#f-search').value = ''; render(); window.scrollTo(0, 0) }
+    else if (a === 'goto') gotoEntry(b.dataset.id);
     else if (a === 'new') { closeCard(); openEditor(null) }
     else if (a === 'import') { closeCard(); $('#f-docx').click() }
     else if (a === 'docsimport') openDocsImport();
