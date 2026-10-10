@@ -363,7 +363,7 @@ function gridHTML(P, variant) {
   } else areas = '"a b" "c d"';
   const ncols = areas.split('"')[1].split(' ').length;
   const st = `grid-template-areas:${areas};grid-template-columns:${cols || `repeat(${ncols},1fr)`};${rows ? `grid-template-rows:${rows};` : ''}`;
-  return `<div class="ph" style='${st}'>${P.map((p, i) => `<figure style="grid-area:${'abcd'[i]}">${imgTag(p)}</figure>`).join('')}</div>`;
+  return `<div class="ph" style='${st}'>${P.map((p, i) => `<figure style="grid-area:${'abcd'[i]}"${p.s ? ` class="s-${p.s}"` : ''}>${imgTag(p)}</figure>`).join('')}</div>`;
 }
 function pageHTML(p, num, ents) {
   if (p.kind === 'cover') {
@@ -643,14 +643,18 @@ function editorHTML(e, draft) {
     <div class="fld" style="flex:0 1 170px"><label for="f-pick">Tria al calendari</label><input type="date" id="f-pick"></div></div>`}
   <div class="fld"><label for="f-title">${e && e.chapter ? 'Títol del capítol' : 'Títol (opcional)'}</label><input type="text" id="f-title" value="${esc(title)}"></div>
   <div class="fld"><label for="f-text">${e && e.chapter ? 'Text (opcional)' : 'El que ha passat'}</label><textarea id="f-text" placeholder="Escriu aquí. Deixa una línia en blanc per començar un paràgraf nou.">${esc(text)}</textarea></div>
-  <div class="fld"><label>Fotos</label><div class="thumbs" id="thumbs"></div><input class="hid" type="file" id="f-photos" accept="image/*" multiple></div>
+  <div class="fld"><label>Fotos</label><p class="hint">Toca «Gran» per fer una foto més petita al llibre. Amb ‹ › canvies l'ordre.</p><div class="thumbs" id="thumbs"></div><input class="hid" type="file" id="f-photos" accept="image/*" multiple></div>
   ${e ? '' : `<label class="chk"><input type="checkbox" id="f-chapter"> És l'inici d'un capítol nou (per exemple, un any)</label>`}
   <div class="actions"><div class="left">${e ? `<button class="btn danger" data-act="del">Esborra</button>${idx > 0 ? `<button class="btn" data-act="merge">Uneix amb l'anterior</button>` : ''}` : ''}</div>
     <button class="btn" data-act="close">Cancel·la</button><button class="btn primary" data-act="save">Desa</button></div>`;
 }
+/* photo size on the page: g = gran (fills its space), m = mitjana, p = petita */
+const SIZES = { g: 'Gran', m: 'Mitjana', p: 'Petita' }, NEXT_SIZE = { g: 'm', m: 'p', p: 'g' };
 function drawThumbs() {
-  $('#thumbs').innerHTML = edit.photos.map((p, i) => `<div class="thumb"><img data-tpid="${p.tmp ? '' : esc(p.id)}" src="${p.tmp ? p.url : (mem.get(p.id) || '')}" alt="Foto ${i + 1}"><div class="tb">
-    <button data-act="left" data-i="${i}" aria-label="Mou abans"${i ? '' : ' style="visibility:hidden"'}>‹</button><button data-act="rm" data-i="${i}" aria-label="Treu la foto">✕</button></div></div>`).join('')
+  const n = edit.photos.length;
+  $('#thumbs').innerHTML = edit.photos.map((p, i) => `<div class="thumb">
+    <div class="th-img s-${p.s || 'g'}"><img data-tpid="${p.tmp ? '' : esc(p.id)}" src="${p.tmp ? p.url : (mem.get(p.id) || '')}" alt="Foto ${i + 1}"><span class="th-n">${i + 1}</span><button type="button" class="th-rm" data-act="rm" data-i="${i}" aria-label="Treu la foto ${i + 1}">✕</button></div>
+    <div class="th-ctl"><button type="button" data-act="left" data-i="${i}" aria-label="Mou la foto ${i + 1} abans"${i ? '' : ' disabled'}>‹</button><button type="button" class="th-size" data-act="size" data-i="${i}" aria-label="Mida de la foto ${i + 1}">${SIZES[p.s || 'g']}</button><button type="button" data-act="right" data-i="${i}" aria-label="Mou la foto ${i + 1} després"${i < n - 1 ? '' : ' disabled'}>›</button></div></div>`).join('')
     + `<button class="add-ph" data-act="addph" type="button">+ Afegeix fotos</button>`;
   $('#thumbs').querySelectorAll('img[data-tpid]').forEach(img => { const id = img.dataset.tpid; if (id && !img.getAttribute('src')) photoURL(id).then(u => img.src = u).catch(() => {}) });
 }
@@ -677,7 +681,7 @@ async function saveEditor() {
     busy('Desant', fresh.length ? `Pujant fotos: 0 de ${fresh.length}` : 'Desant al Drive…');
     const ph = []; let n = 0;
     for (const p of ed.photos) {
-      if (p.tmp) { progress(`Pujant fotos: ${++n} de ${fresh.length}`, n / fresh.length); ph.push(await uploadPhoto(p, fields.date || fields.title)) }
+      if (p.tmp) { progress(`Pujant fotos: ${++n} de ${fresh.length}`, n / fresh.length); const up = await uploadPhoto(p, fields.date || fields.title); if (p.s) up.s = p.s; ph.push(up) }
       else ph.push(p);
     }
     progress('Desant al Drive…');
@@ -890,7 +894,8 @@ document.addEventListener('click', async ev => {
     else if (a === 'printno') finishPrint(false);
     else if (a === 'addph') $('#f-photos').click();
     else if (a === 'rm') { const p = edit.photos.splice(+b.dataset.i, 1)[0]; if (!p.tmp) edit.removed.push(p.id); drawThumbs() }
-    else if (a === 'left') { const i = +b.dataset.i;[edit.photos[i - 1], edit.photos[i]] = [edit.photos[i], edit.photos[i - 1]]; drawThumbs() }
+    else if (a === 'left' || a === 'right') { const i = +b.dataset.i, j = a === 'left' ? i - 1 : i + 1; if (j < 0 || j >= edit.photos.length) return; [edit.photos[j], edit.photos[i]] = [edit.photos[i], edit.photos[j]]; drawThumbs() }
+    else if (a === 'size') { const p = edit.photos[+b.dataset.i], s = NEXT_SIZE[p.s || 'g']; if (s === 'g') delete p.s; else p.s = s; drawThumbs() }
     else if (a === 'save') saveEditor();
     else if (a === 'del') {
       if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'Segur? Torna a prémer'; return }
