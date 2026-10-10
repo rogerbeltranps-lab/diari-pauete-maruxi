@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ca">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Diari Pauete i Mariuxi</title>
+<meta name="theme-color" content="#2f4c74">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Diari">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Figtree:wght@400;500;600&family=Gloock&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="bar" id="bar" hidden><div class="bar-in">
+  <div class="brand" id="brand">Diari Pauete i Mariuxi</div>
+  <label class="sel"><span class="vh">Què vols veure</span><select id="f-group"></select></label>
+  <button class="btn primary" id="b-new" type="button">+ Nova entrada</button>
+  <button class="btn" id="b-print" type="button">Imprimir</button>
+  <button class="btn" id="b-more" type="button" aria-label="Més opcions">Més…</button>
+  <input class="hid" type="file" id="f-docx" multiple accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+</div></header>
+
+<main id="main">
+  <section class="screen" id="s-loading"><p class="muted">Obrint el diari…</p></section>
+  <div class="book" id="book" hidden></div>
+</main>
+
+<div class="ov" id="ov" hidden><div class="card" id="card"></div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js" defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>
