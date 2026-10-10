@@ -305,7 +305,9 @@ function groupsOf(entries) {
   for (const e of entries) { if (e.chapter) gs.push({ key: e.id, title: e.title || 'Capítol', entries: [] }); gs[gs.length - 1].entries.push(e) }
   return gs.filter(g => g.entries.length);
 }
+let printSel = null; // {entries, label, cover} while printing a custom selection
 function selectedEntries() {
+  if (printSel) return printSel.entries;
   if (group === 'all') return data.entries;
   const g = groupsOf(data.entries).find(g => g.key === group);
   return g ? g.entries : data.entries;
@@ -364,7 +366,7 @@ function pageHTML(p, num, ents) {
     const first = ents.flatMap(e => e.photos || [])[0];
     const d = ents.filter(e => !e.chapter).map(e => e.date).filter(Boolean);
     const range = d.length > 1 ? `${d[0]} — ${d[d.length - 1]}` : (d[0] || '');
-    const sub = group !== 'all' ? (groupsOf(data.entries).find(g => g.key === group) || {}).title : data.meta.sub;
+    const sub = printSel ? printSel.label : group !== 'all' ? (groupsOf(data.entries).find(g => g.key === group) || {}).title : data.meta.sub;
     return `<div class="page p-cover ${first ? '' : 'noimg'}">${first ? `<div class="cimg">${imgTag(first)}</div>` : ''}
       <div class="ct"><h1>${esc(data.meta.title || DEFAULT_TITLE)}</h1>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>
       ${range ? `<div class="range">${esc(range)}</div>` : ''}</div>`;
@@ -404,7 +406,7 @@ function render() {
     return;
   }
   const ents = selectedEntries();
-  const pages = [{ kind: 'cover' }]; ents.forEach(e => pages.push(...entryPages(e)));
+  const pages = (printSel && !printSel.cover) ? [] : [{ kind: 'cover' }]; ents.forEach(e => pages.push(...entryPages(e)));
   book.innerHTML = pages.map((p, i) => {
     const tools = p.kind === 'cover' ? `<button data-act="cover">Edita portada</button>` :
       p.first ? `<button data-act="variant" data-id="${p.e.id}">Canvia disseny</button><button data-act="edit" data-id="${p.e.id}">Edita</button>` : '';
@@ -669,26 +671,93 @@ function openInstall() {
   <p>L'adreça és: <code>${esc(REDIRECT)}</code></p>
   <div class="actions"><button class="btn primary" data-act="close">Entesos</button></div>`);
 }
+/* ---- printing: choose what, remember what has been printed ---- */
+function printCounts() {
+  const c = new Map();
+  for (const pr of (data.meta.prints || [])) for (const id of pr.ids || []) c.set(id, (c.get(id) || 0) + 1);
+  return c;
+}
+const fmtWhen = t => { try { return new Intl.DateTimeFormat('ca', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(t)) } catch (e) { return '' } };
+function openPrint() {
+  if (!data.entries.length) { toast('El diari és buit.'); return }
+  const cnt = printCounts(), gs = groupsOf(data.entries);
+  const days = es => es.filter(e => !e.chapter);
+  const unprinted = days(data.entries).filter(e => !cnt.get(e.id));
+  const gStatus = g => {
+    const d = days(g.entries); if (!d.length) return '';
+    const n = d.filter(e => cnt.get(e.id)).length, max = Math.max(0, ...d.map(e => cnt.get(e.id) || 0));
+    return n === 0 ? '<i>no imprès</i>' : n < d.length ? `<i>imprès en part (${n} de ${d.length} dies)</i>` : `<i>imprès${max > 1 ? ' ' + max + ' vegades' : ''}</i>`;
+  };
+  const opts = data.entries.map((e, i) => e.chapter ? '' : `<option value="${i}">${esc(e.date || e.title || 'Entrada ' + (i + 1))}</option>`).join('');
+  const hist = (data.meta.prints || []).slice(-8).reverse().map(pr => `<li>${fmtWhen(pr.at)} · ${esc(pr.label)} · ${pr.days != null ? pr.days : (pr.ids || []).length} dies</li>`).join('');
+  openCard(`<h3>Imprimir o fer un PDF</h3>
+    <div class="menu">
+      <label class="chk"><input type="radio" name="pmode" value="new" ${unprinted.length ? 'checked' : 'disabled'}> <span><b>El que encara no s'ha imprès</b> · ${unprinted.length} dies</span></label>
+      <label class="chk"><input type="radio" name="pmode" value="chap" ${unprinted.length ? '' : 'checked'}> <span><b>Per capítols (anys)</b></span></label>
+      <div id="p-chaps" class="menu" style="padding-left:26px">${gs.map(g => `<label class="chk"><input type="checkbox" data-g="${esc(g.key)}"> <span>${esc(g.title)} · ${days(g.entries).length} dies · ${gStatus(g)}</span></label>`).join('')}</div>
+      <label class="chk"><input type="radio" name="pmode" value="range"> <span><b>Entre dues dates</b></span></label>
+      <div class="row" style="padding-left:26px"><div class="fld"><label for="p-from">Des de</label><select id="p-from">${opts}</select></div><div class="fld"><label for="p-to">Fins a</label><select id="p-to">${opts}</select></div></div>
+      <label class="chk"><input type="checkbox" id="p-cover" checked> <span>Amb portada</span></label>
+    </div>
+    ${hist ? `<p class="muted">Últimes impressions:</p><ul class="muted" style="margin:0;padding-left:20px;line-height:1.6">${hist}</ul>` : ''}
+    <p class="muted">A la finestra d'impressió: mida <b>A4</b>, marges <b>Cap</b>, activa <b>Gràfics de fons</b>. Per fer un PDF, tria «Desa com a PDF».</p>
+    <div class="actions"><button class="btn" data-act="close">Cancel·la</button><button class="btn primary" data-act="doprint">Prepara</button></div>`);
+  const to = $('#p-to'); if (to) to.selectedIndex = to.options.length - 1;
+  card.querySelectorAll('#p-chaps input, #p-from, #p-to').forEach(el => el.addEventListener('change', () => {
+    const v = el.closest('#p-chaps') ? 'chap' : 'range'; const r = card.querySelector(`input[name=pmode][value=${v}]`); if (r) r.checked = true }));
+}
+function chosenPrint() {
+  const mode = (card.querySelector('input[name=pmode]:checked') || {}).value, cnt = printCounts();
+  let ents = [], label = '';
+  if (mode === 'new') {
+    const keep = new Set(data.entries.filter(e => !e.chapter && !cnt.get(e.id)).map(e => e.id));
+    // keep the chapter page of each chapter that has new days, if that chapter page was never printed
+    let curCh = null; for (const e of data.entries) { if (e.chapter) curCh = e; else if (keep.has(e.id) && curCh && !cnt.get(curCh.id)) keep.add(curCh.id) }
+    ents = data.entries.filter(e => keep.has(e.id)); label = 'Pàgines noves';
+  } else if (mode === 'chap') {
+    const ks = [...card.querySelectorAll('#p-chaps input:checked')].map(i => i.dataset.g);
+    const gs = groupsOf(data.entries).filter(g => ks.includes(g.key));
+    ents = gs.flatMap(g => g.entries); label = gs.map(g => g.title).join(', ');
+  } else if (mode === 'range') {
+    let a = +$('#p-from').value, b = +$('#p-to').value; if (a > b) [a, b] = [b, a];
+    ents = data.entries.slice(a, b + 1); label = `${data.entries[a].date || ''} — ${data.entries[b].date || ''}`;
+  }
+  return { entries: ents, label, cover: $('#p-cover') ? $('#p-cover').checked : true };
+}
 async function doPrint() {
+  const sel = chosenPrint();
+  if (!sel.entries.length) { toast('No hi ha res per imprimir amb aquesta tria.'); return }
+  printSel = sel; render();
   const imgs = [...book.querySelectorAll('img[data-pid]')];
   try {
     busy('Preparant per imprimir', `Carregant fotos: 0 de ${imgs.length}`);
     let n = 0;
     await Promise.all(imgs.map(img => loadImg(img).then(() => progress(`Carregant fotos: ${++n} de ${imgs.length}`, n / imgs.length))));
     await Promise.all(imgs.map(i => i.decode ? i.decode().catch(() => {}) : null));
+    await (document.fonts ? document.fonts.ready : null);
     closeCard();
-    setTimeout(() => window.print(), 150);
-  } catch (err) { fail(err, 'preparar la impressió') }
+    await new Promise(r => setTimeout(r, 200));
+    window.print();
+    const nDays = sel.entries.filter(e => !e.chapter).length;
+    openCard(`<h3>L'has imprès o desat?</h3><p>${esc(sel.label)} · ${nDays} dies. Si el PDF s'ha desat o s'ha imprès, ho apunto perquè la propera vegada sàpigues què falta.</p>
+      <div class="actions"><button class="btn" data-act="printno">No, l'he cancel·lat</button><button class="btn primary" data-act="printyes">Sí, apunta-ho</button></div>`, true);
+  } catch (err) { printSel = null; render(); fail(err, 'preparar la impressió') }
+}
+async function finishPrint(ok) {
+  const sel = printSel; printSel = null;
+  if (ok && sel) {
+    busy('Desant');
+    const who = ls.get('diari.hint') || '';
+    await mutate(d => { d.meta.prints = d.meta.prints || []; d.meta.prints.push({ at: Date.now(), who, label: sel.label, days: sel.entries.filter(e => !e.chapter).length, ids: sel.entries.filter(e => !e.chapter).map(e => e.id).concat(sel.entries.filter(e => e.chapter).map(e => e.id)) }) });
+    toast('Apuntat');
+  }
+  closeCard(); render();
 }
 
 /* ================= events ================= */
 $('#b-new').onclick = () => openEditor(null);
 $('#b-more').onclick = openMenu;
-$('#b-print').onclick = () => {
-  openCard(`<h3>Imprimir</h3><p>S'imprimirà <b>${esc($('#f-group').selectedOptions[0] ? $('#f-group').selectedOptions[0].textContent : 'tot el llibre')}</b>. Per imprimir només un any, tria'l al menú de dalt.</p>
-  <p>A la finestra d'impressió tria mida <b>A4</b>, marges <b>Cap</b> i activa <b>Gràfics de fons</b>. Per fer un PDF, tria «Desa com a PDF».</p>
-  <div class="actions"><button class="btn" data-act="close">Cancel·la</button><button class="btn primary" data-act="doprint">Prepara i imprimeix</button></div>`);
-};
+$('#b-print').onclick = openPrint;
 $('#f-group').onchange = ev => { group = ev.target.value; ls.set('diari.group', group); render(); window.scrollTo(0, 0) };
 
 document.addEventListener('click', async ev => {
@@ -727,6 +796,8 @@ document.addEventListener('click', async ev => {
       catch (e) { const ta = document.createElement('textarea'); ta.value = code; ta.style.cssText = 'width:100%;height:160px'; b.after(ta); ta.select(); toast('Copia el text seleccionat') }
     }
     else if (a === 'doprint') doPrint();
+    else if (a === 'printyes') finishPrint(true);
+    else if (a === 'printno') finishPrint(false);
     else if (a === 'addph') $('#f-photos').click();
     else if (a === 'rm') { const p = edit.photos.splice(+b.dataset.i, 1)[0]; if (!p.tmp) edit.removed.push(p.id); drawThumbs() }
     else if (a === 'left') { const i = +b.dataset.i;[edit.photos[i - 1], edit.photos[i]] = [edit.photos[i], edit.photos[i - 1]]; drawThumbs() }
