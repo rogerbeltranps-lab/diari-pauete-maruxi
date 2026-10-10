@@ -548,7 +548,7 @@ async function pickDoc(id) {
       ${ready < totImg ? `<div class="empty" style="margin:0"><h2 style="font-size:20px">Pas previ: preparar les fotos</h2>
         <p>Fotos preparades: <b>${ready} de ${totImg}</b>. El navegador no pot copiar les fotos d'un Google Docs; un petit script de Google sí.</p>
         <ol style="margin:0;padding-left:20px;line-height:1.6"><li>Prem <b>Copia el script</b>.</li><li>Obre <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com</a> (projecte nou), esborra el que hi ha i enganxa'l.</li>
-        <li>Prem <b>Desa</b> i després <b>Executa</b> (funció <code>copiarFotos</code>). Accepta els permisos.</li><li>Quan al registre surti <b>FET</b>, torna aquí i prem Importa. Si hi ha moltes fotos, el script continua sol cada minut.</li></ol>
+        <li>A l'esquerra, a <b>Serveis</b>, prem <b>+</b>, tria <b>Google Docs API</b> i prem <b>Afegeix</b>.</li><li>Prem <b>Desa</b> i després <b>Executa</b> (funció <code>copiarFotos</code>). Accepta els permisos.</li><li>Quan al registre surti <b>FET</b>, torna aquí i prem Importa. Si hi ha moltes fotos, el script continua sol cada minut.</li></ol>
         <div class="row"><button class="btn" data-act="copyscript" data-doc="${esc(id)}">Copia el script</button></div></div>` : `<p class="muted">Les ${totImg} fotos estan preparades.</p>`}
       <p class="muted">Amb moltes fotos pot trigar una estona: deixa la pantalla oberta.</p>
       <div class="actions"><button class="btn" data-act="close">Cancel·la</button><button class="btn primary" data-act="dodocimport" data-doc="${esc(id)}">Importa</button></div>`);

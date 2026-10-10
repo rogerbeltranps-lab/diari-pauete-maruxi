@@ -9,7 +9,8 @@
  *  1. Ves a https://script.google.com i prem «Projecte nou».
  *  2. Esborra el que hi ha i enganxa tot aquest text.
  *  3. A DOC_ID posa l'identificador del document (l'app te'l dona ja posat).
- *  4. Prem Desa (icona del disquet) i després «Executa» amb la funció copiarFotos.
+ *  4. A l'esquerra, a «Serveis», prem + i afegeix «Google Docs API».
+ *     Prem Desa (icona del disquet) i després «Executa» amb la funció copiarFotos.
  *  5. Google et demanarà permisos: accepta'ls (és el teu propi script).
  *  6. Si hi ha moltes fotos, el script continua sol cada minut fins que acaba.
  *     Al «Registre d'execució» veuràs «FET» quan hagi acabat.
@@ -26,9 +27,7 @@ function copiarFotos() {
   while (files.hasNext()) existing.add(files.next().getName());
 
   const token = ScriptApp.getOAuthToken();
-  const res = UrlFetchApp.fetch('https://docs.googleapis.com/v1/documents/' + DOC_ID + '?includeTabsContent=true',
-    { headers: { Authorization: 'Bearer ' + token } });
-  const doc = JSON.parse(res.getContentText());
+  const doc = Docs.Documents.get(DOC_ID, { includeTabsContent: true }); // cal afegir el servei «Google Docs API» (Serveis +)
   const tabs = [];
   (function walk(ts) { (ts || []).forEach(function (t) { tabs.push(t); walk(t.childTabs); }); })(doc.tabs);
 
