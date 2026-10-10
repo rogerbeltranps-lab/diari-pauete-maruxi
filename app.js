@@ -442,6 +442,7 @@ function gotoEntry(id) {
 }
 function render() {
   $('#bar').hidden = false; $('#s-loading').hidden = true; $('#layout').hidden = false;
+  if (data.meta && data.meta.theme) applyTheme(data.meta.theme);
   renderNav();
   seen.disconnect();
   if (!data.entries.length) {
@@ -690,10 +691,43 @@ async function saveEditor() {
   } catch (err) { fail(err, 'desar') }
 }
 
+/* ================= colour themes (shared by everyone through diari.json, so the printed book matches) ================= */
+const THEMES = [
+  {"key": "bosc", "name": "Bosc", "desc": "Verd bosc i terracota", "sw": ["#ece5da", "#3e5a48", "#a5583c", "#fffefb"], "vars": {}},
+  {"key": "tinta", "name": "Tinta", "desc": "Blau marí i mostassa", "sw": ["#e9e8e4", "#28385a", "#c08a2d", "#fffefb"], "vars": {"--desk": "#e9e8e4", "--panel": "#f7f6f2", "--ink": "#1f2430", "--muted": "#6e717a", "--line": "#d6d4cd", "--accent": "#28385a", "--accent-soft": "#dfe3ec", "--clay": "#c08a2d", "--paper-ink": "#1f2430", "--paper-soft": "#7d7f86", "--paper-accent": "#28385a", "--paper-clay": "#b07c22", "--paper-line": "#d8d6cf"}},
+  {"key": "mar", "name": "Mar", "desc": "Verd aigua i corall", "sw": ["#e6ecea", "#2f6f6a", "#d06a4e", "#fffefb"], "vars": {"--desk": "#e6ecea", "--panel": "#f5f8f7", "--ink": "#1f2b2a", "--muted": "#677572", "--line": "#d0dad7", "--accent": "#2f6f6a", "--accent-soft": "#dbe9e6", "--clay": "#d06a4e", "--paper-ink": "#1f2b2a", "--paper-soft": "#76827f", "--paper-accent": "#2f6f6a", "--paper-clay": "#c4603f", "--paper-line": "#d2dbd8", "--photo-bg": "#e8eeec"}},
+  {"key": "vi", "name": "Vi", "desc": "Granat i daurat", "sw": ["#efe7e6", "#6e2f45", "#b9864a", "#fffefb"], "vars": {"--desk": "#efe7e6", "--panel": "#faf6f5", "--ink": "#2e2124", "--muted": "#806c70", "--line": "#e0d2d1", "--accent": "#6e2f45", "--accent-soft": "#f0e0e4", "--clay": "#b9864a", "--paper-ink": "#2e2124", "--paper-soft": "#8a777b", "--paper-accent": "#6e2f45", "--paper-clay": "#a97a3f", "--paper-line": "#e2d5d4", "--photo-bg": "#f1e9e8"}},
+  {"key": "crema", "name": "Crema", "desc": "Crema i terracota, com la teva imatge", "sw": ["#f7efe4", "#c9694b", "#7a2e20", "#fffaf3"], "vars": {"--desk": "#f7efe4", "--panel": "#fffaf4", "--ink": "#3b2a22", "--muted": "#8b7565", "--line": "#ecdccb", "--accent": "#c9694b", "--accent-soft": "#f9e4d7", "--clay": "#7a2e20", "--paper": "#fffcf7", "--paper-ink": "#3b2a22", "--paper-soft": "#9a8373", "--paper-accent": "#b35a3d", "--paper-clay": "#7a2e20", "--paper-line": "#e6d3c1", "--photo-bg": "#f2e7da"}},
+  {"key": "llapis", "name": "Llapis", "desc": "Blanc i negre: estalvia tinta de color", "sw": ["#ebebea", "#333333", "#8c8c86", "#ffffff"], "vars": {"--desk": "#ebebea", "--panel": "#f8f8f7", "--ink": "#222222", "--muted": "#6f6f6c", "--line": "#d8d8d4", "--accent": "#333333", "--accent-soft": "#e6e6e3", "--clay": "#8c8c86", "--paper": "#ffffff", "--paper-ink": "#222222", "--paper-soft": "#7d7d79", "--paper-accent": "#2b2b2b", "--paper-clay": "#7a7a74", "--paper-line": "#d9d9d5", "--photo-bg": "#eeeeee"}}
+];
+function applyTheme(key) {
+  const t = THEMES.find(x => x.key === key) || THEMES[0], st = document.documentElement.style;
+  THEMES.forEach(x => Object.keys(x.vars).forEach(v => st.removeProperty(v)));
+  Object.entries(t.vars).forEach(([v, c]) => st.setProperty(v, c));
+  const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = t.sw[0];
+  document.documentElement.dataset.diariTheme = t.key;
+  ls.set('diari.theme', t.key);
+}
+applyTheme(ls.get('diari.theme'));
+function openThemes() {
+  const cur = (data.meta && data.meta.theme) || ls.get('diari.theme') || THEMES[0].key;
+  openCard(`<h3>Colors del diari</h3><p>Tria els colors que més t'agradin. Es veuen a l'app i al llibre imprès, i els veureu tots dos.</p>
+    <div class="themes">${THEMES.map(t => `<button class="theme${t.key === cur ? ' on' : ''}" type="button" data-act="theme" data-k="${t.key}" aria-pressed="${t.key === cur}">
+      <span class="sw">${t.sw.map(c => `<i style="background:${c}"></i>`).join('')}</span><b>${esc(t.name)}</b><small>${esc(t.desc)}</small></button>`).join('')}</div>
+    <div class="actions"><button class="btn primary" data-act="close">Fet</button></div>`);
+}
+async function pickTheme(key) {
+  applyTheme(key);
+  card.querySelectorAll('.theme').forEach(b => { const on = b.dataset.k === key; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on) });
+  data.meta.theme = key;
+  await mutate(d => { d.meta.theme = key });
+}
+
 /* ================= menu, cover, share, print ================= */
 function openMenu() {
   openCard(`<h3>Més opcions</h3><div class="menu">
     <button class="btn" data-act="docsimport">Importa del Google Docs</button>
+    <button class="btn" data-act="themes">Colors del diari</button>
     <button class="btn" data-act="cover">Edita la portada</button>
     <button class="btn" data-act="share">Comparteix el diari amb algú</button>
     <button class="btn" data-act="refresh">Actualitza (veure els canvis de l'altre)</button>
@@ -808,6 +842,7 @@ async function finishPrint(ok) {
 /* ================= events ================= */
 $('#b-new').onclick = () => openEditor(null);
 $('#b-more').onclick = openMenu;
+$('#b-theme').onclick = openThemes;
 $('#b-print').onclick = openPrint;
 let searchT; $('#f-search').oninput = () => { clearTimeout(searchT); searchT = setTimeout(renderList, 150) };
 
@@ -828,7 +863,9 @@ document.addEventListener('click', async ev => {
     else if (a === 'edit' && e) openEditor(e);
     else if (a === 'variant' && e) { const id = e.id; e.variant = e.variant ? 0 : 1; render(); await mutate(d => { const x = d.entries.find(y => y.id === id); if (x) x.variant = e.variant }) }
     else if (a === 'cover') openCover();
-    else if (a === 'savecover') { const t = $('#c-title').value.trim() || DEFAULT_TITLE, s = $('#c-sub').value.trim(); busy('Desant'); await mutate(d => { d.meta = { title: t, sub: s } }); closeCard(); render() }
+    else if (a === 'themes') openThemes();
+    else if (a === 'theme') pickTheme(b.dataset.k);
+    else if (a === 'savecover') { const t = $('#c-title').value.trim() || DEFAULT_TITLE, s = $('#c-sub').value.trim(); busy('Desant'); await mutate(d => { d.meta = Object.assign(d.meta || {}, { title: t, sub: s }) }); closeCard(); render() }
     else if (a === 'share') openShare();
     else if (a === 'doshare') {
       const mail = $('#s-mail').value.trim(); if (!/^\S+@\S+\.\S+$/.test(mail)) { toast('Escriu un correu vàlid.'); return }
