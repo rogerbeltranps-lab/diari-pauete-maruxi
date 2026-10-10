@@ -1,10 +1,10 @@
-/* Diari Pauete i Mariuxi — web-app
+/* Diari de Pau i Maruxi — web-app
    Content lives in a Google Drive folder (diari.json + fotos/), login with Google (OAuth implicit redirect). */
 (() => {
 'use strict';
 const CFG = window.DIARI_CONFIG || {};
 const FOLDER_NAME = CFG.folderName || 'Diari Pauete i Mariuxi';
-const DEFAULT_TITLE = 'Diari Pauete i Mariuxi';
+const DEFAULT_TITLE = 'Diari de Pau i Maruxi';
 const SCOPE = 'https://www.googleapis.com/auth/drive';
 const DRIVE = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
@@ -671,12 +671,12 @@ window.addEventListener('beforeprint', () => book.querySelectorAll('img[data-pid
 
 /* ================= boot ================= */
 function setupScreen() {
-  showScreen(`<div class="hand">Falta un pas</div><h1>Diari Pauete i Mariuxi</h1>
+  showScreen(`<div class="hand">Falta un pas</div><h1>Diari de Pau i Maruxi</h1>
     <p>L'app ja està penjada, però encara no està connectada amb Google. Cal posar l'«ID de client» de Google Cloud a l'arxiu <code>config.js</code> del repositori.</p>
     <p>Els passos estan explicats al <a href="https://github.com/rogerbeltranps-lab/diari-pauete-maruxi#readme">README del repositori</a>.</p>`);
 }
 function loginScreen(msg) {
-  showScreen(`<div class="hand">el nostre llibre</div><h1>Diari Pauete i Mariuxi</h1>
+  showScreen(`<div class="hand">el nostre llibre</div><h1>Diari de Pau i Maruxi</h1>
     <p>Entra amb el teu compte de Google. Les fotos i els textos es guarden a la carpeta «${esc(FOLDER_NAME)}» del vostre Google Drive.</p>
     ${msg ? `<p class="muted">${esc(msg)}</p>` : ''}
     <button class="btn primary big" data-act="login">Entra amb Google</button>`);

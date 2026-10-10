@@ -1,4 +1,4 @@
-# Diari Pauete i Mariuxi
+# Diari de Pau i Maruxi
 
 Web-app per convertir el diari familiar en un llibre de fotos per imprimir.
 
