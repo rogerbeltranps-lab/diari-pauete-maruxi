@@ -13,7 +13,7 @@
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;color:var(--ink);font-family:var(--f-ui);font-size:16px;padding-bottom:env(safe-area-inset-bottom,0px);min-height:100vh;
-  background:var(--desk) radial-gradient(ellipse at 50% 0,#f4eee5 0,transparent 70%) no-repeat}
+  background:var(--desk) radial-gradient(ellipse at 50% 0,color-mix(in srgb,var(--desk) 55%,#fff) 0,transparent 70%) no-repeat}
 img{max-width:100%}
 [hidden]{display:none!important}
 button,select,input,textarea{font:inherit;color:inherit}
