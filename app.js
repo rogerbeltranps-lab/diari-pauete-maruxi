@@ -375,17 +375,18 @@ function pageHTML(p, num, ents) {
       <div class="ct"><h1>${esc(data.meta.title || DEFAULT_TITLE)}</h1>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>
       ${range ? `<div class="range">${esc(range)}</div>` : ''}</div>`;
   }
-  const e = p.e, v = e.variant || 0, pn = `<div class="pn">${num}</div>`;
+  const e = p.e, v = e.variant || 0, side = num % 2 ? 'verso' : 'recto';
+  const pn = `<div class="pn">${num}</div>`, run = !e.chapter && chOf.get(e.id) ? `<div class="run">${esc(chOf.get(e.id))}</div>` : '';
   const txt = l => `<div class="txt">${l.map(t => `<p>${esc(t)}</p>`).join('')}</div>`;
   if (p.kind === 'chapter') {
     const y = (e.title.match(reYear) || [''])[0];
-    return `<div class="page p-chapter"><div class="chh">${y ? `<div class="yr">${y}</div>` : ''}<div class="cht">${esc(e.title)}</div></div>${p.paras.length ? txt(p.paras) : ''}${p.photos.length ? gridHTML(p.photos, v) : ''}${pn}</div>`;
+    return `<div class="page p-chapter"><div class="chh">${y ? `<div class="yr">${y}</div>` : ''}${e.title && e.title !== y ? `<div class="cht">${esc(e.title)}</div>` : ''}</div>${p.paras.length ? txt(p.paras) : ''}${p.photos.length ? gridHTML(p.photos, v) : ''}${pn}</div>`;
   }
-  if (p.kind === 'entry') return `<div class="page p-entry ${p.photos.length ? '' : 'p-text'} v${v}">
+  if (p.kind === 'entry') return `<div class="page p-entry ${side} ${p.photos.length ? '' : 'p-text'} v${v}">${run}
       <div class="eh">${e.date ? `<div class="date">${esc(e.date)}</div>` : ''}${e.title ? `<h2>${esc(e.title)}</h2>` : ''}</div>
       ${p.paras.length ? txt(p.paras) : ''}${p.photos.length ? gridHTML(p.photos, v) : ''}${pn}</div>`;
-  if (p.kind === 'text') return `<div class="page p-text"><div class="rh">${esc(e.date || e.title)} · continua</div>${txt(p.paras)}${pn}</div>`;
-  return `<div class="page p-gallery"><div class="rh">${esc(e.date || e.title)}</div>${gridHTML(p.photos, (v + num) % 2)}${pn}</div>`;
+  if (p.kind === 'text') return `<div class="page p-text ${side}">${run}<div class="rh">${esc(e.date || e.title)} · continua</div>${txt(p.paras)}${pn}</div>`;
+  return `<div class="page p-gallery ${side}">${run}<div class="rh">${esc(e.date || e.title)}</div>${gridHTML(p.photos, (v + num) % 2)}${pn}</div>`;
 }
 
 /* ================= render ================= */
@@ -394,40 +395,33 @@ const listEl = $('#list');
 function showScreen(html) {
   const s = $('#s-loading'); s.innerHTML = html; s.hidden = false; $('#layout').hidden = true;
 }
-const ICON = {
-  book: '<path d="M4 5.5C6.5 4 9.5 4 12 6c2.5-2 5.5-2 8-.5V19c-2.5-1.5-5.5-1.5-8 .5-2.5-2-5.5-2-8-.5z"/><path d="M12 6v13.5"/>',
-  leaf: '<path d="M5 19C5 10 10 5 20 4c0 10-5 15-14 15"/><path d="M5 19 13 11"/>',
-  home: '<path d="M4 11 12 4l8 7v9h-5v-6H9v6H4z"/>'
-};
-const svg = k => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>`;
 function renderNav() {
   const gs = groupsOf(data.entries), nav = $('#nav');
   if (group !== 'all' && !gs.some(g => g.key === group)) group = 'all';
-  const days = es => es.filter(e => !e.chapter).length;
-  const item = (key, title, icon, n) => `<button class="nav-i${group === key ? ' on' : ''}" type="button" data-act="group" data-g="${esc(key)}"${group === key ? ' aria-current="true"' : ''}>${svg(icon)}<span>${esc(title)}</span>${n != null ? `<small>${n}</small>` : ''}</button>`;
-  nav.innerHTML = item('all', 'Tot el llibre', 'book', days(data.entries)) + (gs.length > 1 ? gs.map(g => item(g.key, g.title, g.key === 'inici' ? 'home' : 'leaf', days(g.entries))).join('') : '');
+  const item = (key, title) => `<button class="nav-i${group === key ? ' on' : ''}" type="button" data-act="group" data-g="${esc(key)}"${group === key ? ' aria-current="true"' : ''}>${esc(title)}</button>`;
+  nav.innerHTML = item('all', 'Tot el llibre') + (gs.length > 1 ? gs.map(g => item(g.key, g.title)).join('') : '');
 }
 /* entry list (middle column): click jumps to the entry's page */
 const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-const excerpt = e => { const t = (e.paras || []).join(' '); return t.length > 130 ? t.slice(0, 127).replace(/\s+\S*$/, '') + '…' : t };
 function renderList() {
   const q = norm($('#f-search').value.trim());
   const ents = q ? data.entries.filter(e => norm([e.date, e.title, ...(e.paras || [])].join(' ')).includes(q)) : selectedEntries();
   const g = groupsOf(data.entries).find(g => g.key === group);
   const head = q ? 'Resultats' : group === 'all' ? 'Tot el llibre' : (g ? g.title : 'Tot el llibre');
   const nDays = ents.filter(e => !e.chapter).length;
-  listEl.innerHTML = `<div class="list-h"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></svg><h2>${esc(head)}</h2><span>${nDays} ${nDays === 1 ? 'dia' : 'dies'}</span></div>`
+  listEl.innerHTML = `<div class="list-h"><h2>${q ? 'Resultats' : 'Índex'}</h2><span>${q ? '' : esc(head) + ' · '}${nDays} ${nDays === 1 ? 'dia' : 'dies'}</span></div>`
     + (ents.length ? ents.map(e => {
-      if (e.chapter) return `<button class="li-ch" type="button" data-act="goto" data-id="${e.id}">${esc(e.title || 'Capítol')}</button>`;
-      const ph = (e.photos || [])[0];
+      const pg = pageNo.has(e.id) ? `<span class="li-p">${pageNo.get(e.id)}</span>` : '';
+      if (e.chapter) return `<button class="li-ch" type="button" data-act="goto" data-id="${e.id}"><span>${esc(e.title || 'Capítol')}</span>${pg}</button>`;
       return `<button class="li" type="button" data-act="goto" data-id="${e.id}">
-        <span class="li-img">${ph ? imgTag(ph) : svg('leaf')}</span>
-        <span class="li-t">${e.title && e.date ? `<span class="li-d">${esc(e.date)}</span>` : ''}<span class="li-h">${esc(e.title || e.date || 'Sense títol')}</span><span class="li-x">${esc(excerpt(e))}</span></span></button>`;
+        <span class="li-row"><span class="li-h">${esc(e.title || e.date || 'Sense títol')}</span><span class="li-dots"></span>${pg}</span>
+        ${e.title && e.date ? `<span class="li-d">${esc(e.date)}</span>` : ''}</button>`;
     }).join('') : `<p class="muted li-none">${q ? 'No hi ha cap entrada amb aquestes paraules.' : 'Encara no hi ha entrades.'}</p>`);
   listEl.querySelectorAll('img[data-pid]').forEach(img => { if (mem.has(img.dataset.pid)) loadImg(img); else io.observe(img) });
   markActive(activeId);
 }
 let activeId = null;
+const pageNo = new Map(), chOf = new Map();
 function markActive(id) {
   activeId = id;
   listEl.querySelectorAll('[data-act=goto].on').forEach(b => b.classList.remove('on'));
@@ -460,6 +454,9 @@ function render() {
   }
   const ents = selectedEntries();
   const pages = (printSel && !printSel.cover) ? [] : [{ kind: 'cover' }]; ents.forEach(e => pages.push(...entryPages(e)));
+  pageNo.clear(); chOf.clear();
+  pages.forEach((p, i) => { if (p.first && !pageNo.has(p.e.id)) pageNo.set(p.e.id, i) });
+  { let ch = ''; for (const e of data.entries) { if (e.chapter) ch = e.title || ''; chOf.set(e.id, ch) } }
   book.innerHTML = pages.map((p, i) => {
     const tools = p.kind === 'cover' ? `<button data-act="cover">Edita portada</button>` :
       p.first ? `<button data-act="variant" data-id="${p.e.id}">Canvia disseny</button><button data-act="edit" data-id="${p.e.id}">Edita</button>` : '';
