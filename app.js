@@ -1,4 +1,4 @@
-/* Diari de Pauete i Maruxi — web-app
+/* Diaris Nidia — web-app (first diary: «Diari de Pauete i Maruxi»)
    Content lives in a Google Drive folder (diari.json + fotos/), login with Google (OAuth implicit redirect). */
 (() => {
 'use strict';
@@ -967,12 +967,12 @@ window.addEventListener('beforeprint', () => book.querySelectorAll('img[data-pid
 
 /* ================= boot ================= */
 function setupScreen() {
-  showScreen(`<div class="hand">Falta un pas</div><h1>Diari de Pauete i Maruxi</h1>
+  showScreen(`<div class="hand">Falta un pas</div><h1>Diaris Nidia</h1>
     <p>L'app ja està penjada, però encara no està connectada amb Google. Cal posar l'«ID de client» de Google Cloud a l'arxiu <code>config.js</code> del repositori.</p>
     <p>Els passos estan explicats al <a href="https://github.com/rogerbeltranps-lab/diari-pauete-maruxi#readme">README del repositori</a>.</p>`);
 }
 function loginScreen(msg) {
-  showScreen(`<div class="hand">el nostre llibre</div><h1>Diari de Pauete i Maruxi</h1>
+  showScreen(`<div class="hand">els nostres llibres</div><h1>Diaris Nidia</h1>
     <p>Entra amb el teu compte de Google. Les fotos i els textos es guarden a la carpeta «${esc(FOLDER_NAME)}» del vostre Google Drive.</p>
     ${msg ? `<p class="muted">${esc(msg)}</p>` : ''}
     <button class="btn primary big" data-act="login">Entra amb Google</button>`);

@@ -156,6 +156,9 @@ main{min-width:0}
 .empty .row{display:flex;gap:10px;flex-wrap:wrap}
 
 /* ---------- diaries list ---------- */
+.brand-t{display:flex;flex-direction:column;gap:3px;min-width:0}
+.app-name{font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;color:var(--muted);line-height:1}
+
 #brand{cursor:pointer}
 .btn.diari{justify-content:space-between;gap:12px}
 .btn.diari small{color:var(--muted);font-style:italic;font-weight:400}
