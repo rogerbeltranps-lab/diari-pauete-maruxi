@@ -47,9 +47,18 @@ function login() {
 function logout() { ls.del('diari.tok'); ls.del('diari.hint'); ls.del('diari.folder'); location.reload() }
 function ensureToken(minLeft = 120) { if (!token(minLeft)) { saveDraft(); login() } return token(minLeft) }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function api(url, opts = {}) {
-  const t = ensureToken(30);
-  const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + t } });
+  let r = null, lastErr = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const t = ensureToken(30);
+    try {
+      r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + t } });
+      if ((r.status === 429 || r.status >= 500 || (r.status === 403 && /rate|quota/i.test(await r.clone().text().catch(() => '')))) && attempt < 4) { await sleep(1500 * 2 ** attempt); continue }
+      break;
+    } catch (e) { lastErr = e; console.warn('network error, retrying', url.slice(0, 80), e); await sleep(1500 * 2 ** attempt) }
+  }
+  if (!r) { const err = new Error("No hi ha connexió amb Google (" + (lastErr && lastErr.message) + ")"); err.network = true; throw err }
   if (r.status === 401) { ls.del('diari.tok'); saveDraft(); login() }
   if (!r.ok) { const txt = await r.text().catch(() => ''); const err = new Error('Drive ' + r.status + ' ' + txt.slice(0, 200)); err.status = r.status; throw err }
   return r;
@@ -251,12 +260,17 @@ function contentUri(tab, img) {
 }
 async function docImage(docId, img) {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const doc = await fetchDoc(docId, attempt > 0);
+    const doc = await fetchDoc(docId);
     const uri = contentUri(doc.tabs.find(t => t.id === img.tab), img); if (!uri) return null;
     try {
-      const r = await fetch(uri); if (r.ok) { const u = URL.createObjectURL(await r.blob()); try { return await shrink(u) } finally { URL.revokeObjectURL(u) } }
-    } catch (e) { /* CORS or network: try as cross-origin image */ }
+      const r = await fetch(uri);
+      if (r.ok) { const u = URL.createObjectURL(await r.blob()); try { const out = await shrink(u); if (out) return out } finally { URL.revokeObjectURL(u) } }
+      else console.warn('photo fetch status', r.status);
+    } catch (e) { console.warn('photo fetch failed, trying <img>', e) }
     const viaImg = await shrink(uri, true); if (viaImg) return viaImg;
+    // image links expire after ~30 min: refresh the document once if ours is old
+    if (Date.now() - doc.at < 10 * 60e3) break;
+    docCache = null;
   }
   return null;
 }
@@ -462,8 +476,10 @@ async function runImport(groupsList, resolveImg) {
         const pe = g.entries[i], ph = [];
         for (const im of pe.imgs) {
           progress(`${g.label}: dia ${i + 1} de ${g.entries.length} · fotos ${++done} de ${total}`, done / Math.max(total, 1));
-          const r = await resolveImg(im);
-          if (r) { ph.push(await uploadPhoto(r, pe.date || pe.title)); nPh++ } else failed++;
+          try {
+            const r = await resolveImg(im);
+            if (r) { ph.push(await uploadPhoto(r, pe.date || pe.title)); nPh++ } else failed++;
+          } catch (e) { if (e instanceof Redirecting) throw e; console.warn('photo skipped', e); failed++ }
         }
         out.push({ id: uid(), chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: ph, variant: i % 2 });
         pe.chapter ? nCh++ : nEn++;
