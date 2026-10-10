@@ -152,14 +152,14 @@ function loadImg(img) {
 const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { io.unobserve(e.target); loadImg(e.target) } }), { rootMargin: '1200px 0px' });
 
 /* ================= image shrinking ================= */
-async function shrink(src) {
-  const img = new Image(); img.src = src;
+async function shrink(src, cross) {
+  const img = new Image(); if (cross) img.crossOrigin = 'anonymous'; img.src = src;
   try { await img.decode() } catch (e) { return null }
   const w = img.naturalWidth, h = img.naturalHeight; if (!w || !h || (w < 90 && h < 90)) return null;
   const r = Math.min(1, 1800 / Math.max(w, h)), cw = Math.round(w * r), ch = Math.round(h * r);
   const c = document.createElement('canvas'); c.width = cw; c.height = ch; const x = c.getContext('2d');
   x.fillStyle = '#fff'; x.fillRect(0, 0, cw, ch); x.drawImage(img, 0, 0, cw, ch);
-  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', .86));
+  let blob = null; try { blob = await new Promise(r => c.toBlob(r, 'image/jpeg', .86)) } catch (e) { return null }
   return blob ? { blob, w: cw, h: ch } : null;
 }
 async function shrinkFile(file) { const u = URL.createObjectURL(file); try { return await shrink(u) } finally { URL.revokeObjectURL(u) } }
@@ -173,29 +173,92 @@ const reDay = new RegExp('^\\W*(' + DAYS + ')\\b', 'i');
 const reYear = /\b(19|20)\d{2}\b/;
 const isDateLine = t => t.length <= 70 && (reNum.test(t) || reMon.test(t) || reDay.test(t));
 const isChapter = t => t.length <= 60 && reYear.test(t) && !isDateLine(t);
+/* blocks: [{t (text, may contain \n), heading, bold, imgs:[]}] → entries. tabTitle starts a chapter. */
+function blocksToEntries(blocks, tabTitle) {
+  const hasDates = blocks.some(b => b.t && isDateLine(b.t.replace(/\n/g, ' ')));
+  const out = []; let cur = null;
+  const clean = s => s.replace(/[:.\s]+$/, '');
+  const start = (d, ch) => { cur = { date: ch ? '' : d, title: ch ? clean(d) : '', chapter: !!ch, paras: [], imgs: [] }; out.push(cur) };
+  if (tabTitle) start(tabTitle, true);
+  for (const b of blocks) {
+    const t = (b.t || '').trim();
+    if (t) {
+      const one = t.replace(/\n/g, ' ');
+      if (isChapter(one) && (b.heading || !cur || one === one.toUpperCase() || b.bold)) {
+        if (cur && cur.chapter && !cur.paras.length && !cur.imgs.length) cur.title = clean(one); else start(one, true);
+      }
+      else if (hasDates ? isDateLine(one) : b.heading) start(one);
+      else if (b.heading && cur && !cur.title && !cur.paras.length) cur.title = one;
+      else { if (!cur) start(''); cur.paras.push(t) }
+    }
+    if (b.imgs && b.imgs.length) { if (!cur) start(''); cur.imgs.push(...b.imgs) }
+  }
+  return out.filter(e => e.date || e.title || e.paras.length || e.imgs.length);
+}
 async function parseDocx(buf) {
   const res = await mammoth.convertToHtml({ arrayBuffer: buf });
   const doc = new DOMParser().parseFromString(res.value, 'text/html');
+  const els = [];
+  (function walk(n) { for (const el of n.children) { const t = el.tagName.toLowerCase(); if (['table', 'tbody', 'thead', 'tr', 'td', 'th', 'ul', 'ol', 'div'].includes(t)) walk(el); else els.push(el) } })(doc.body);
+  const blocks = els.map(b => {
+    const tag = b.tagName.toLowerCase();
+    const imgs = (tag === 'img' ? [b.getAttribute('src')] : [...b.querySelectorAll('img')].map(i => i.getAttribute('src'))).filter(Boolean).map(src => ({ src }));
+    b.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+    const t = b.textContent.replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').trim();
+    return { t, heading: /^h[1-6]$/.test(tag), bold: !!b.querySelector('strong'), imgs };
+  });
+  return blocksToEntries(blocks);
+}
+
+/* ---- read the Google Doc directly (Docs API, with tabs) ---- */
+const DOCS = 'https://docs.googleapis.com/v1/documents/';
+let docCache = null; // {id, at, tabs:[{id,title,dt}]}
+function flattenTabs(tabs, out = []) { for (const t of tabs || []) { out.push({ id: t.tabProperties.tabId, title: t.tabProperties.title || '', dt: t.documentTab }); flattenTabs(t.childTabs, out) } return out }
+async function fetchDoc(id, force) {
+  if (!force && docCache && docCache.id === id && Date.now() - docCache.at < 20 * 60e3) return docCache;
+  const d = await getJSON(DOCS + encodeURIComponent(id) + '?includeTabsContent=true');
+  docCache = { id, at: Date.now(), name: d.title, tabs: flattenTabs(d.tabs) };
+  return docCache;
+}
+function tabBlocks(tab) {
   const blocks = [];
-  (function walk(n) { for (const el of n.children) { const t = el.tagName.toLowerCase(); if (['table', 'tbody', 'thead', 'tr', 'td', 'th', 'ul', 'ol', 'div'].includes(t)) walk(el); else blocks.push(el) } })(doc.body);
-  const textOf = b => { b.querySelectorAll('br').forEach(br => br.replaceWith('\n')); return b.textContent.replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').trim() };
-  const hasDates = blocks.some(b => isDateLine(b.textContent.trim()));
-  const out = []; let cur = null;
-  const start = (d, ch) => { cur = { date: ch ? '' : d, title: ch ? d.replace(/[:.\s]+$/, '') : '', chapter: !!ch, paras: [], imgs: [] }; out.push(cur) };
-  for (const b of blocks) {
-    const tag = b.tagName.toLowerCase(), heading = /^h[1-6]$/.test(tag);
-    const imgs = tag === 'img' ? [b.getAttribute('src')] : [...b.querySelectorAll('img')].map(i => i.getAttribute('src'));
-    const t = textOf(b);
-    if (t) {
-      const one = t.replace(/\n/g, ' ');
-      if (isChapter(one) && (heading || !cur || one === one.toUpperCase() || b.querySelector('strong'))) start(one, true);
-      else if (hasDates ? isDateLine(one) : heading) start(one);
-      else if (heading && cur && !cur.title && !cur.paras.length) cur.title = one;
-      else { if (!cur) start(''); cur.paras.push(t) }
+  const walk = content => {
+    for (const se of content || []) {
+      if (se.paragraph) {
+        const p = se.paragraph; let t = '', bold = false; const imgs = [];
+        for (const el of p.elements || []) {
+          if (el.textRun) { t += el.textRun.content || ''; if (el.textRun.textStyle && el.textRun.textStyle.bold && (el.textRun.content || '').trim()) bold = true }
+          if (el.inlineObjectElement) imgs.push({ tab: tab.id, obj: el.inlineObjectElement.inlineObjectId });
+        }
+        for (const po of p.positionedObjectIds || []) imgs.push({ tab: tab.id, obj: po, pos: true });
+        t = t.replace(/\u000b/g, '\n').replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').trim();
+        const st = (p.paragraphStyle && p.paragraphStyle.namedStyleType) || '';
+        blocks.push({ t, heading: /^HEADING|^TITLE/.test(st), bold, imgs });
+      } else if (se.table) {
+        for (const row of se.table.tableRows || []) for (const cell of row.tableCells || []) walk(cell.content);
+      } else if (se.tableOfContents) { /* skip */ }
     }
-    if (imgs.length) { if (!cur) start(''); cur.imgs.push(...imgs.filter(Boolean)) }
+  };
+  walk(tab.dt && tab.dt.body && tab.dt.body.content);
+  return blocks;
+}
+function contentUri(tab, img) {
+  const dt = tab && tab.dt; if (!dt) return null;
+  const o = img.pos ? (dt.positionedObjects || {})[img.obj] : (dt.inlineObjects || {})[img.obj];
+  const props = o && (img.pos ? o.positionedObjectProperties : o.inlineObjectProperties);
+  const ip = props && props.embeddedObject && props.embeddedObject.imageProperties;
+  return ip && (ip.contentUri || ip.sourceUri) || null;
+}
+async function docImage(docId, img) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const doc = await fetchDoc(docId, attempt > 0);
+    const uri = contentUri(doc.tabs.find(t => t.id === img.tab), img); if (!uri) return null;
+    try {
+      const r = await fetch(uri); if (r.ok) { const u = URL.createObjectURL(await r.blob()); try { return await shrink(u) } finally { URL.revokeObjectURL(u) } }
+    } catch (e) { /* CORS or network: try as cross-origin image */ }
+    const viaImg = await shrink(uri, true); if (viaImg) return viaImg;
   }
-  return out.filter(e => e.date || e.title || e.paras.length || e.imgs.length);
+  return null;
 }
 
 /* ================= state ================= */
@@ -301,8 +364,8 @@ function render() {
   if (!data.entries.length) {
     book.innerHTML = `<div class="empty"><h2>El diari és buit</h2>
       <p>Pots portar-hi el que ja teniu al Google Docs o començar amb una entrada nova.</p>
-      <p class="muted">Per importar: des de l'ordinador, al Google Docs fes <b>Fitxer → Baixa → Microsoft Word (.docx)</b> i tria <b>Totes les pestanyes</b> (o baixa cada pestanya per separat).</p>
-      <div class="row"><button class="btn primary" data-act="import">Importa el Google Docs (.docx)</button><button class="btn" data-act="new">+ Nova entrada</button></div></div>`;
+      <p class="muted">L'app llegeix el document directament del vostre Google Drive, amb totes les pestanyes i les fotos. No cal baixar res.</p>
+      <div class="row"><button class="btn primary" data-act="docsimport">Importa del Google Docs</button><button class="btn" data-act="new">+ Nova entrada</button></div></div>`;
     return;
   }
   const ents = selectedEntries();
@@ -353,22 +416,86 @@ $('#f-docx').onchange = async ev => {
   try {
     ensureToken(1500);
     busy('Important el diari', 'Llegint ' + (files.length > 1 ? files.length + ' arxius' : '«' + files[0].name + '»') + '…');
-    const parsed = []; for (const f of files) parsed.push(...await parseDocx(await f.arrayBuffer()));
-    const total = parsed.reduce((a, e) => a + e.imgs.length, 0); let done = 0, nPh = 0, batch = [];
-    for (const [i, pe] of parsed.entries()) {
-      const ph = [];
-      for (const src of pe.imgs) {
-        progress(`Pujant fotos al Drive: ${++done} de ${total}`, done / Math.max(total, 1));
-        const r = await shrink(src); if (r) { ph.push(await uploadPhoto(r, pe.date || pe.title)); nPh++ }
-      }
-      batch.push({ id: uid(), chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: ph, variant: i % 2 });
-      if (batch.length >= 8 || i === parsed.length - 1) { const b = batch; batch = []; await mutate(d => d.entries.push(...b)) }
-    }
-    closeCard(); render();
-    const nCh = parsed.filter(x => x.chapter).length;
-    toast(`Fet: ${nCh ? nCh + ' capítols, ' : ''}${parsed.length - nCh} entrades i ${nPh} fotos.`, 5000);
+    const groupsList = [];
+    for (const f of files) groupsList.push({ key: null, label: f.name, entries: await parseDocx(await f.arrayBuffer()) });
+    await runImport(groupsList, img => shrink(img.src));
   } catch (err) { fail(err, 'importar el diari') }
 };
+
+/* Import groups of parsed entries (one group = one tab or one file). Each group is saved to Drive as a whole. */
+async function runImport(groupsList, resolveImg) {
+  const total = groupsList.reduce((a, g) => a + g.entries.reduce((b, e) => b + e.imgs.length, 0), 0);
+  let done = 0, nPh = 0, nEn = 0, nCh = 0, failed = 0;
+  for (const [gi, g] of groupsList.entries()) {
+    if (!token(900)) {
+      openCard(`<h3>Cal tornar a entrar</h3><p>Ja s'han importat ${gi} de ${groupsList.length} parts. Per seguretat Google demana tornar a entrar cada hora. Prem Continua i després torna a importar: les pestanyes que ja estan fetes surten desmarcades.</p>
+        <div class="actions"><button class="btn primary" data-act="login">Continua</button></div>`, true);
+      render(); return;
+    }
+    const out = [];
+    for (const [i, pe] of g.entries.entries()) {
+      const ph = [];
+      for (const im of pe.imgs) {
+        progress(`${g.label}: pujant fotos al Drive (${++done} de ${total})`, done / Math.max(total, 1));
+        const r = await resolveImg(im);
+        if (r) { ph.push(await uploadPhoto(r, pe.date || pe.title)); nPh++ } else failed++;
+      }
+      out.push({ id: uid(), chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: ph, variant: i % 2 });
+      pe.chapter ? nCh++ : nEn++;
+    }
+    progress(`${g.label}: desant…`);
+    await mutate(d => { d.entries.push(...out); if (g.key) { d.meta.imported = d.meta.imported || {}; d.meta.imported[g.key] = Date.now() } });
+  }
+  closeCard(); render();
+  toast(`Fet: ${nCh ? nCh + ' capítols, ' : ''}${nEn} entrades i ${nPh} fotos.${failed ? ` ${failed} fotos no s'han pogut copiar.` : ''}`, 6000);
+}
+
+/* ---- import straight from the Google Doc ---- */
+const docIdFrom = s => { const m = String(s).match(/\/d\/([a-zA-Z0-9_-]{20,})/) || String(s).match(/^([a-zA-Z0-9_-]{25,})$/); return m ? m[1] : null };
+async function openDocsImport() {
+  try {
+    ensureToken(1500);
+    busy('Importa del Google Docs', 'Buscant els teus documents…');
+    const r = await getJSON(`${DRIVE}/files?` + qs({ q: "mimeType='application/vnd.google-apps.document' and trashed=false", orderBy: 'modifiedTime desc', pageSize: 15, fields: 'files(id,name,modifiedTime)', supportsAllDrives: true, includeItemsFromAllDrives: true }));
+    const docs = r.files || [];
+    openCard(`<h3>Importa del Google Docs</h3>
+      <p>Tria el document del diari. L'app el llegeix directament, amb totes les pestanyes, sense haver-lo de baixar.</p>
+      <div class="menu">${docs.map(d => `<button class="btn" data-act="pickdoc" data-doc="${esc(d.id)}">${esc(d.name)}</button>`).join('') || '<p>No he trobat cap document.</p>'}</div>
+      <div class="fld"><label for="d-link">O enganxa l'enllaç del document</label><input type="text" id="d-link" placeholder="https://docs.google.com/document/d/…"></div>
+      <div class="actions"><div class="left"><button class="btn" data-act="import">Puja un .docx</button></div><button class="btn" data-act="close">Cancel·la</button><button class="btn primary" data-act="picklink">Obre l'enllaç</button></div>`);
+  } catch (err) { fail(err, 'buscar els documents') }
+}
+async function pickDoc(id) {
+  try {
+    busy('Llegint el document', 'Pot trigar una mica si té moltes fotos…');
+    const doc = await fetchDoc(id, true);
+    const imp = (data.meta && data.meta.imported) || {};
+    const rows = doc.tabs.map(t => {
+      const blocks = tabBlocks(t), nImg = blocks.reduce((a, b) => a + b.imgs.length, 0), nDates = blocks.filter(b => b.t && isDateLine(b.t.replace(/\n/g, ' '))).length;
+      const done = imp[id + ':' + t.id];
+      return `<label class="chk"><input type="checkbox" data-tab="${esc(t.id)}" ${done ? '' : 'checked'}> <span><b>${esc(t.title || 'Pestanya')}</b> · ${nDates} dies, ${nImg} fotos${done ? ' · <i>ja importada</i>' : ''}</span></label>`;
+    }).join('');
+    openCard(`<h3>${esc(doc.name || 'Document')}</h3><p>Tria les pestanyes que vols portar al llibre. Cada pestanya serà un capítol.</p>
+      <div class="menu" id="tabs">${rows || '<p>El document és buit.</p>'}</div>
+      <p class="muted">Les fotos es copien a la carpeta del diari al Drive. Amb moltes fotos pot trigar uns minuts: deixa la pantalla oberta.</p>
+      <div class="actions"><button class="btn" data-act="close">Cancel·la</button><button class="btn primary" data-act="dodocimport" data-doc="${esc(id)}">Importa</button></div>`);
+  } catch (err) {
+    if (err.status === 403 || err.status === 404) {
+      openCard(`<h3>No puc obrir aquest document</h3><p>Comprova que el document està compartit amb el compte amb què has entrat, i que a Google Cloud està activada la <b>Google Docs API</b> (mira el README).</p><div class="actions"><button class="btn primary" data-act="close">D'acord</button></div>`);
+    } else fail(err, 'llegir el document');
+  }
+}
+async function doDocImport(id) {
+  const tabIds = [...card.querySelectorAll('#tabs input:checked')].map(i => i.dataset.tab);
+  if (!tabIds.length) { toast('Tria almenys una pestanya.'); return }
+  try {
+    ensureToken(1500);
+    busy('Important el diari', 'Preparant…');
+    const doc = await fetchDoc(id);
+    const groupsList = doc.tabs.filter(t => tabIds.includes(t.id)).map(t => ({ key: id + ':' + t.id, label: t.title || 'Pestanya', entries: blocksToEntries(tabBlocks(t), t.title) }));
+    await runImport(groupsList, img => docImage(id, img));
+  } catch (err) { fail(err, 'importar el diari') }
+}
 
 /* ================= editor ================= */
 let edit = null; // {id|null, photos:[{id,w,h}|{tmp,blob,w,h,url}], removed:[]}
@@ -437,7 +564,7 @@ async function saveEditor() {
 /* ================= menu, cover, share, print ================= */
 function openMenu() {
   openCard(`<h3>Més opcions</h3><div class="menu">
-    <button class="btn" data-act="import">Importa del Google Docs (.docx)</button>
+    <button class="btn" data-act="docsimport">Importa del Google Docs</button>
     <button class="btn" data-act="cover">Edita la portada</button>
     <button class="btn" data-act="share">Comparteix el diari amb algú</button>
     <button class="btn" data-act="refresh">Actualitza (veure els canvis de l'altre)</button>
@@ -495,6 +622,10 @@ document.addEventListener('click', async ev => {
     else if (a === 'login') login();
     else if (a === 'new') { closeCard(); openEditor(null) }
     else if (a === 'import') { closeCard(); $('#f-docx').click() }
+    else if (a === 'docsimport') openDocsImport();
+    else if (a === 'pickdoc') pickDoc(b.dataset.doc);
+    else if (a === 'picklink') { const id = docIdFrom($('#d-link').value.trim()); if (!id) { toast("Aquest enllaç no sembla d'un Google Docs."); return } pickDoc(id) }
+    else if (a === 'dodocimport') doDocImport(b.dataset.doc);
     else if (a === 'edit' && e) openEditor(e);
     else if (a === 'variant' && e) { const id = e.id; e.variant = e.variant ? 0 : 1; render(); await mutate(d => { const x = d.entries.find(y => y.id === id); if (x) x.variant = e.variant }) }
     else if (a === 'cover') openCover();

@@ -11,7 +11,7 @@ Cal crear un «ID de client» de Google perquè l'app pugui fer login i guardar 
 
 1. Entra a https://console.cloud.google.com amb el teu compte de Google.
 2. **Crea un projecte**: a dalt, al selector de projectes → *Projecte nou* → nom `Diari` → *Crea*.
-3. **Activa l'API de Drive**: menú → *APIs i serveis* → *Biblioteca* → cerca **Google Drive API** → *Activa*.
+3. **Activa dues APIs**: menú → *APIs i serveis* → *Biblioteca* → cerca **Google Drive API** → *Activa*. Després cerca **Google Docs API** → *Activa* (serveix per llegir el diari directament del Google Docs).
 4. **Pantalla de consentiment** (a *APIs i serveis* → *Pantalla de consentiment d'OAuth*, o *Google Auth Platform*):
    - Tipus d'usuari: **Extern**.
    - Nom de l'app: `Diari Pauete i Mariuxi`, i el teu correu on ho demani.
@@ -29,11 +29,12 @@ Cal crear un «ID de client» de Google perquè l'app pugui fer login i guardar 
 1. Obre l'app i entra amb Google. Com que l'app està en mode prova, Google mostrarà l'avís «Google no ha verificat aquesta aplicació»: prem **Continua**. És normal per a una app privada.
 2. Prem **Crea el diari**. Es crea la carpeta al teu Drive.
 3. **Més… → Comparteix el diari amb algú** i posa el correu de la Nidia.
-4. **Més… → Importa del Google Docs**: al Google Docs, des de l'ordinador, *Fitxer → Baixa → Microsoft Word (.docx)* i tria **Totes les pestanyes** (o baixa cada pestanya i puja-les juntes).
+4. **Més… → Importa del Google Docs**: tria el document del diari i les pestanyes. L'app el llegeix directament (no cal baixar-lo) i copia les fotos a la carpeta del diari. Ho ha de fer algú que tingui accés al document. Amb moltes fotos pot trigar uns minuts: deixa la pantalla oberta. Si cal parar, les pestanyes ja importades surten desmarcades la vegada següent.
 
-## Com detecta les entrades del .docx
+## Com detecta les entrades
 
-- Una línia curta amb un any (per exemple «DIARIO DE LOS PAPIS 2022») → **capítol**.
+- Cada pestanya del document → **capítol** (el títol serà, per exemple, «DIARIO DE LOS PAPIS 2022» si la pestanya comença amb aquesta línia).
+- Una línia curta amb un any → també **capítol**.
 - Una línia curta amb una data («15 de marzo», «12/05/2022», «Sábado…») → **entrada nova**.
 - Tot el text i les fotos que hi ha fins a la següent data → aquella entrada.
 
@@ -42,3 +43,5 @@ Si una entrada surt partida, a l'app: *Edita → Uneix amb l'anterior*.
 ## Imprimir
 
 Botó **Imprimir** → A4, marges *Cap*, *Gràfics de fons* activat. Per imprimir només un any, tria'l al menú de dalt abans.
+
+També es pot importar un arxiu .docx (Més… → Importa del Google Docs → Puja un .docx), però amb documents grans és millor la lectura directa.
