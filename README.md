@@ -1,9 +1,9 @@
-# Diari de Pau i Maruxi
+# Diari de Pauete i Maruxi
 
 Web-app per convertir el diari familiar en un llibre de fotos per imprimir.
 
 - **On és l'app:** https://rogerbeltranps-lab.github.io/diari-pauete-maruxi/
-- **On es guarda el contingut:** a la carpeta «Diari Pauete i Mariuxi» del Google Drive (un arxiu `diari.json` amb els textos i una carpeta `fotos`). Res del diari es guarda en aquest repositori.
+- **On es guarda el contingut:** a la carpeta «Diari de Pauete i Maruxi» (o «Diari Pauete i Mariuxi», el nom antic, que l'app també reconeix) del Google Drive (un arxiu `diari.json` amb els textos i una carpeta `fotos`). Res del diari es guarda en aquest repositori.
 
 ## Configuració (una sola vegada, uns 15 minuts)
 
@@ -14,7 +14,7 @@ Cal crear un «ID de client» de Google perquè l'app pugui fer login i guardar 
 3. **Activa dues APIs**: menú → *APIs i serveis* → *Biblioteca* → cerca **Google Drive API** → *Activa*. Després cerca **Google Docs API** → *Activa* (serveix per llegir el diari directament del Google Docs).
 4. **Pantalla de consentiment** (a *APIs i serveis* → *Pantalla de consentiment d'OAuth*, o *Google Auth Platform*):
    - Tipus d'usuari: **Extern**.
-   - Nom de l'app: `Diari Pauete i Mariuxi`, i el teu correu on ho demani.
+   - Nom de l'app: `Diari de Pauete i Maruxi`, i el teu correu on ho demani.
    - A **Públic / Usuaris de prova**, afegeix el teu correu i el de la Nidia.
    - Deixa l'app en mode **Prova** (no cal publicar-la ni verificar-la).
 5. **Crea el client**: *Credencials* (o *Clients*) → *Crea credencials* → **ID de client d'OAuth**:
