@@ -31,6 +31,10 @@ Cal crear un «ID de client» de Google perquè l'app pugui fer login i guardar 
 3. **Més… → Comparteix el diari amb algú** i posa el correu de la Nidia.
 4. **Més… → Importa del Google Docs**: tria el document del diari i les pestanyes. L'app el llegeix directament (no cal baixar-lo) i copia les fotos a la carpeta del diari. Ho ha de fer algú que tingui accés al document. Amb moltes fotos pot trigar uns minuts: deixa la pantalla oberta. Si cal parar, les pestanyes ja importades surten desmarcades la vegada següent.
 
+## Fotos del Google Docs (pas previ)
+
+El navegador no pot copiar les fotos d'un Google Docs. Per això hi ha un petit script de Google, `copiar-fotos.gs`, que les copia a «Diari Pauete i Mariuxi / fotos-originals». A l'app, *Importa del Google Docs* et mostra quantes fotos estan preparades i un botó **Copia el script** (ja porta l'identificador del document). Enganxa'l a https://script.google.com (projecte nou), desa i executa `copiarFotos`. Si hi ha moltes fotos, continua sol cada minut fins que al registre surt **FET**.
+
 ## Com detecta les entrades
 
 - Cada pestanya del document → **capítol** (el títol serà, per exemple, «DIARIO DE LOS PAPIS 2022» si la pestanya comença amb aquesta línia).

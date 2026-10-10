@@ -275,6 +275,27 @@ async function docImage(docId, img) {
   return null;
 }
 
+/* Photos copied by the Apps Script (copiar-fotos.gs) into «fotos-originals»: name = tabId__objectId.img */
+async function listAll(q, fields = 'id,name') {
+  const out = []; let pageToken = '';
+  do {
+    const r = await getJSON(`${DRIVE}/files?` + qs({ q, fields: `nextPageToken,files(${fields})`, pageSize: 1000, spaces: 'drive', supportsAllDrives: true, includeItemsFromAllDrives: true, ...(pageToken ? { pageToken } : {}) }));
+    out.push(...(r.files || [])); pageToken = r.nextPageToken || '';
+  } while (pageToken);
+  return out;
+}
+async function loadOriginals() {
+  const f = await list(`'${folderId}' in parents and name='fotos-originals' and mimeType='${FOLDER_MIME}' and trashed=false`);
+  const map = new Map(); if (!f[0]) return map;
+  for (const x of await listAll(`'${f[0].id}' in parents and trashed=false`)) map.set(x.name, x.id);
+  return map;
+}
+async function originalImage(map, img) {
+  const fid = map.get(img.tab + '__' + img.obj + '.img'); if (!fid) return null;
+  const blob = await (await api(`${DRIVE}/files/${fid}?alt=media&supportsAllDrives=true`)).blob();
+  const u = URL.createObjectURL(blob); try { return await shrink(u) } finally { URL.revokeObjectURL(u) }
+}
+
 /* ================= state ================= */
 let data = emptyData();
 let group = ls.get('diari.group') || 'all';
@@ -481,7 +502,7 @@ async function runImport(groupsList, resolveImg) {
             if (r) { ph.push(await uploadPhoto(r, pe.date || pe.title)); nPh++ } else failed++;
           } catch (e) { if (e instanceof Redirecting) throw e; console.warn('photo skipped', e); failed++ }
         }
-        out.push({ id: uid(), chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: ph, variant: i % 2 });
+        out.push({ id: uid(), src: g.key || undefined, chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: ph, variant: i % 2 });
         pe.chapter ? nCh++ : nEn++;
         const last = i === g.entries.length - 1;
         if (last || out.length >= 4) { progress(`${g.label}: desant…`); await flush(last, i + 1) }
@@ -514,14 +535,22 @@ async function pickDoc(id) {
     data = await readData();
     const doc = await fetchDoc(id, true);
     const imp = (data.meta && data.meta.imported) || {};
+    const orig = await loadOriginals();
+    let totImg = 0, ready = 0;
     const rows = doc.tabs.map(t => {
       const blocks = tabBlocks(t), nImg = blocks.reduce((a, b) => a + b.imgs.length, 0), nDates = blocks.filter(b => b.t && isDateLine(b.t.replace(/\n/g, ' '))).length;
+      blocks.forEach(b => b.imgs.forEach(im => { totImg++; if (orig.has(im.tab + '__' + im.obj + '.img')) ready++ }));
       const done = imp[id + ':' + t.id], part = ((data.meta && data.meta.importProgress) || {})[id + ':' + t.id];
-      return `<label class="chk"><input type="checkbox" data-tab="${esc(t.id)}" ${done ? '' : 'checked'}> <span><b>${esc(t.title || 'Pestanya')}</b> · ${nDates} dies, ${nImg} fotos${done ? ' · <i>ja importada</i>' : part ? ' · <i>a mitges, continuarà on es va quedar</i>' : ''}</span></label>`;
+      return `<label class="chk"><input type="checkbox" data-tab="${esc(t.id)}" ${done ? '' : 'checked'}> <span><b>${esc(t.title || 'Pestanya')}</b> · ${nDates} dies, ${nImg} fotos${done ? ' · <i>ja importada (si la marques, es torna a importar)</i>' : part ? ' · <i>a mitges, continuarà on es va quedar</i>' : ''}</span></label>`;
     }).join('');
     openCard(`<h3>${esc(doc.name || 'Document')}</h3><p>Tria les pestanyes que vols portar al llibre. Cada pestanya serà un capítol.</p>
       <div class="menu" id="tabs">${rows || '<p>El document és buit.</p>'}</div>
-      <p class="muted">Les fotos es copien a la carpeta del diari al Drive. Amb moltes fotos pot trigar uns minuts: deixa la pantalla oberta.</p>
+      ${ready < totImg ? `<div class="empty" style="margin:0"><h2 style="font-size:20px">Pas previ: preparar les fotos</h2>
+        <p>Fotos preparades: <b>${ready} de ${totImg}</b>. El navegador no pot copiar les fotos d'un Google Docs; un petit script de Google sí.</p>
+        <ol style="margin:0;padding-left:20px;line-height:1.6"><li>Prem <b>Copia el script</b>.</li><li>Obre <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com</a> (projecte nou), esborra el que hi ha i enganxa'l.</li>
+        <li>Prem <b>Desa</b> i després <b>Executa</b> (funció <code>copiarFotos</code>). Accepta els permisos.</li><li>Quan al registre surti <b>FET</b>, torna aquí i prem Importa. Si hi ha moltes fotos, el script continua sol cada minut.</li></ol>
+        <div class="row"><button class="btn" data-act="copyscript" data-doc="${esc(id)}">Copia el script</button></div></div>` : `<p class="muted">Les ${totImg} fotos estan preparades.</p>`}
+      <p class="muted">Amb moltes fotos pot trigar una estona: deixa la pantalla oberta.</p>
       <div class="actions"><button class="btn" data-act="close">Cancel·la</button><button class="btn primary" data-act="dodocimport" data-doc="${esc(id)}">Importa</button></div>`);
   } catch (err) {
     if (err.status === 403 || err.status === 404) {
@@ -536,8 +565,11 @@ async function doDocImport(id) {
     ensureToken(1500);
     busy('Important el diari', 'Preparant…');
     const doc = await fetchDoc(id);
+    const orig = await loadOriginals();
     const groupsList = doc.tabs.filter(t => tabIds.includes(t.id)).map(t => ({ key: id + ':' + t.id, label: t.title || 'Pestanya', entries: blocksToEntries(tabBlocks(t), t.title) }));
-    await runImport(groupsList, img => docImage(id, img));
+    const again = groupsList.filter(g => data.meta.imported && data.meta.imported[g.key]).map(g => g.key);
+    if (again.length) await mutate(d => { d.entries = d.entries.filter(e => !again.includes(e.src)); again.forEach(k => { delete d.meta.imported[k]; if (d.meta.importProgress) delete d.meta.importProgress[k] }) });
+    await runImport(groupsList, async img => (await originalImage(orig, img)) || docImage(id, img));
   } catch (err) { fail(err, 'importar el diari') }
 }
 
@@ -613,6 +645,7 @@ function openMenu() {
     <button class="btn" data-act="share">Comparteix el diari amb algú</button>
     <button class="btn" data-act="refresh">Actualitza (veure els canvis de l'altre)</button>
     <button class="btn" data-act="install">Posa-la a la pantalla del mòbil</button>
+    <button class="btn" data-act="reset">Buida el diari i torna a començar</button>
     <button class="btn" data-act="logout">Surt</button></div>
     <div class="actions"><button class="btn" data-act="close">Tanca</button></div>`);
 }
@@ -684,6 +717,15 @@ document.addEventListener('click', async ev => {
     else if (a === 'refresh') { busy('Actualitzant'); data = await readData(); closeCard(); render() }
     else if (a === 'install') openInstall();
     else if (a === 'logout') logout();
+    else if (a === 'reset') openCard(`<h3>Buidar el diari?</h3><p>S'esborraran totes les entrades del llibre (no el Google Docs original ni les fotos preparades). Després podràs tornar a importar-ho tot.</p><div class="actions"><button class="btn" data-act="close">Cancel·la</button><button class="btn danger" data-act="doreset">Sí, buida-ho</button></div>`);
+    else if (a === 'doreset') { busy('Buidant'); await mutate(d => { d.entries = []; d.meta.imported = {}; d.meta.importProgress = {} }); closeCard(); render(); toast('Diari buit') }
+    else if (a === 'copyscript') {
+      const id = b.dataset.doc; let code = '';
+      try { code = await (await fetch('copiar-fotos.gs', { cache: 'no-store' })).text() } catch (e) {}
+      code = code.replace('ENGANXA_AQUI_L_ID_DEL_DOCUMENT', id);
+      try { await navigator.clipboard.writeText(code); toast('Script copiat. Enganxa\'l a script.google.com', 4500) }
+      catch (e) { const ta = document.createElement('textarea'); ta.value = code; ta.style.cssText = 'width:100%;height:160px'; b.after(ta); ta.select(); toast('Copia el text seleccionat') }
+    }
     else if (a === 'doprint') doPrint();
     else if (a === 'addph') $('#f-photos').click();
     else if (a === 'rm') { const p = edit.photos.splice(+b.dataset.i, 1)[0]; if (!p.tmp) edit.removed.push(p.id); drawThumbs() }
