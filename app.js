@@ -1,10 +1,11 @@
-/* Diari Pauete i Mariuxi — web-app
+/* Diari de Pauete i Maruxi — web-app
    Content lives in a Google Drive folder (diari.json + fotos/), login with Google (OAuth implicit redirect). */
 (() => {
 'use strict';
 const CFG = window.DIARI_CONFIG || {};
-const FOLDER_NAME = CFG.folderName || 'Diari Pauete i Mariuxi';
-const DEFAULT_TITLE = 'Diari Pauete i Mariuxi';
+const OLD_NAME = 'Diari Pauete i Mariuxi'; // nom antic: carpeta i títol de diaris ja creats
+const FOLDER_NAME = CFG.folderName || 'Diari de Pauete i Maruxi';
+const DEFAULT_TITLE = 'Diari de Pauete i Maruxi';
 const SCOPE = 'https://www.googleapis.com/auth/drive';
 const DRIVE = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
@@ -96,7 +97,9 @@ async function locateFolder() {
     try { const f = await getJSON(`${DRIVE}/files/${stored}?fields=id,trashed&supportsAllDrives=true`); if (!f.trashed) { folderId = stored; await findDataFile(); return true } } catch (e) { if (e instanceof Redirecting) throw e }
     ls.del('diari.folder');
   }
-  const cands = await list(`name='${qName(FOLDER_NAME)}' and mimeType='${FOLDER_MIME}' and trashed=false`);
+  const names = [...new Set([FOLDER_NAME, OLD_NAME])];
+  const cands = (await list(`(${names.map(n => `name='${qName(n)}'`).join(' or ')}) and mimeType='${FOLDER_MIME}' and trashed=false`))
+    .sort((a, b) => names.indexOf(a.name) - names.indexOf(b.name));
   for (const c of cands) { folderId = c.id; if (await findDataFile()) { ls.set('diari.folder', c.id); return true } }
   if (cands[0]) { folderId = cands[0].id; ls.set('diari.folder', folderId); return true }
   folderId = null; return false;
@@ -113,6 +116,7 @@ async function readData() {
   if (!dataFileId) return emptyData();
   const d = await getJSON(`${DRIVE}/files/${dataFileId}?alt=media&supportsAllDrives=true`);
   d.meta = d.meta || { title: DEFAULT_TITLE, sub: '' }; d.entries = d.entries || [];
+  if (d.meta.title === OLD_NAME) d.meta.title = DEFAULT_TITLE;
   return d;
 }
 async function writeData(d) {
@@ -828,12 +832,12 @@ window.addEventListener('beforeprint', () => book.querySelectorAll('img[data-pid
 
 /* ================= boot ================= */
 function setupScreen() {
-  showScreen(`<div class="hand">Falta un pas</div><h1>Diari Pauete i Mariuxi</h1>
+  showScreen(`<div class="hand">Falta un pas</div><h1>Diari de Pauete i Maruxi</h1>
     <p>L'app ja està penjada, però encara no està connectada amb Google. Cal posar l'«ID de client» de Google Cloud a l'arxiu <code>config.js</code> del repositori.</p>
     <p>Els passos estan explicats al <a href="https://github.com/rogerbeltranps-lab/diari-pauete-maruxi#readme">README del repositori</a>.</p>`);
 }
 function loginScreen(msg) {
-  showScreen(`<div class="hand">el nostre llibre</div><h1>Diari Pauete i Mariuxi</h1>
+  showScreen(`<div class="hand">el nostre llibre</div><h1>Diari de Pauete i Maruxi</h1>
     <p>Entra amb el teu compte de Google. Les fotos i els textos es guarden a la carpeta «${esc(FOLDER_NAME)}» del vostre Google Drive.</p>
     ${msg ? `<p class="muted">${esc(msg)}</p>` : ''}
     <button class="btn primary big" data-act="login">Entra amb Google</button>`);
