@@ -155,6 +155,12 @@ main{min-width:0}
 .empty p{margin:0}
 .empty .row{display:flex;gap:10px;flex-wrap:wrap}
 
+/* ---------- diaries list ---------- */
+#brand{cursor:pointer}
+.btn.diari{justify-content:space-between;gap:12px}
+.btn.diari small{color:var(--muted);font-style:italic;font-weight:400}
+.btn.diari.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+
 /* ---------- colour themes picker ---------- */
 .themes{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
 .theme{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;border:1.5px solid var(--line);background:var(--panel);border-radius:14px;padding:12px}

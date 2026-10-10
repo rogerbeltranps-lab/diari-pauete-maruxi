@@ -75,8 +75,9 @@ async function list(q, fields = 'files(id,name,ownedByMe,modifiedTime)') {
   return r.files || [];
 }
 const qName = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-async function createFolder(name, parent) {
-  const body = { name, mimeType: FOLDER_MIME }; if (parent) body.parents = [parent];
+const DIARI_PROP = { diari: '1' }; // marks the folders the app creates as diaries
+async function createFolder(name, parent, props) {
+  const body = { name, mimeType: FOLDER_MIME }; if (parent) body.parents = [parent]; if (props) body.appProperties = props;
   const r = await getJSON(`${DRIVE}/files?fields=id&supportsAllDrives=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   return r.id;
 }
@@ -103,6 +104,11 @@ async function locateFolder() {
   for (const c of cands) { folderId = c.id; if (await findDataFile()) { ls.set('diari.folder', c.id); return true } }
   if (cands[0]) { folderId = cands[0].id; ls.set('diari.folder', folderId); return true }
   folderId = null; return false;
+}
+/* every diary is its own Drive folder; the first one was found by name, new ones carry DIARI_PROP */
+async function listDiaries() {
+  const names = [...new Set([FOLDER_NAME, OLD_NAME])].map(n => `name='${qName(n)}'`).join(' or ');
+  return list(`mimeType='${FOLDER_MIME}' and trashed=false and (appProperties has { key='diari' and value='1' } or ${names})`);
 }
 async function ensurePhotosFolder() {
   if (photosFolderId) return photosFolderId;
@@ -443,6 +449,7 @@ function gotoEntry(id) {
 function render() {
   $('#bar').hidden = false; $('#s-loading').hidden = true; $('#layout').hidden = false;
   if (data.meta && data.meta.theme) applyTheme(data.meta.theme);
+  $('#brand').textContent = data.meta.title || DEFAULT_TITLE;
   renderNav();
   seen.disconnect();
   if (!data.entries.length) {
@@ -727,16 +734,50 @@ async function pickTheme(key) {
   await mutate(d => { d.meta.theme = key });
 }
 
+/* ================= several diaries ================= */
+async function openDiaries() {
+  busy('Diaris', 'Buscant els diaris…');
+  const ds = await listDiaries();
+  if (folderId && !ds.some(d => d.id === folderId)) ds.unshift({ id: folderId, name: data.meta.title || FOLDER_NAME });
+  openCard(`<h3>Diaris</h3><p>Podeu tenir més d'un diari. Cadascun té les seves entrades, fotos i colors, i no es barregen. Tria quin vols obrir.</p>
+    <div class="menu">${ds.map(d => `<button class="btn diari${d.id === folderId ? ' on' : ''}" type="button" data-act="opendiari" data-id="${esc(d.id)}"${d.id === folderId ? ' aria-current="true"' : ''}><span>${esc(d.name)}</span><small>${d.id === folderId ? 'obert ara' : d.ownedByMe === false ? 'compartit amb tu' : ''}</small></button>`).join('')}</div>
+    <div class="row"><div class="fld"><label for="n-name">Crea un diari nou</label><input type="text" id="n-name" placeholder="Per exemple: Viatge a Menorca"></div><button class="btn" data-act="newdiari" type="button">Crea'l</button></div>
+    <p class="muted">Crear un diari nou no toca els altres: «${esc(data.meta.title || DEFAULT_TITLE)}» es queda tal com està.</p>
+    <div class="actions"><button class="btn primary" data-act="close">Tanca</button></div>`);
+}
+async function loadDiari(id) {
+  folderId = id; dataFileId = null; photosFolderId = null; ls.set('diari.folder', id);
+  group = 'all'; ls.set('diari.group', group); $('#f-search').value = ''; activeId = null;
+  data = await readData();
+}
+async function switchDiari(id) {
+  if (id === folderId) { closeCard(); return }
+  busy('Obrint el diari');
+  await loadDiari(id);
+  applyTheme(data.meta.theme || THEMES[0].key);
+  closeCard(); render(); window.scrollTo(0, 0);
+}
+async function newDiari(name) {
+  if (!name) { toast('Posa-li un nom.'); $('#n-name').focus(); return }
+  busy('Creant el diari', '«' + name + '»');
+  const theme = data.meta.theme || ls.get('diari.theme');
+  const id = await createFolder(name, null, DIARI_PROP);
+  await loadDiari(id);
+  data = emptyData(); data.meta.title = name; if (theme) data.meta.theme = theme;
+  await writeData(data);
+  closeCard(); render(); window.scrollTo(0, 0); toast('Diari creat: ' + name);
+}
+
 /* ================= menu, cover, share, print ================= */
 function openMenu() {
   openCard(`<h3>Més opcions</h3><div class="menu">
     <button class="btn" data-act="docsimport">Importa del Google Docs</button>
+    <button class="btn" data-act="diaris">Canvia de diari o crea'n un de nou</button>
     <button class="btn" data-act="themes">Colors del diari</button>
     <button class="btn" data-act="cover">Edita la portada</button>
     <button class="btn" data-act="share">Comparteix el diari amb algú</button>
     <button class="btn" data-act="refresh">Actualitza (veure els canvis de l'altre)</button>
     <button class="btn" data-act="install">Posa-la a la pantalla del mòbil</button>
-    <button class="btn" data-act="reset">Buida el diari i torna a començar</button>
     <button class="btn" data-act="logout">Surt</button></div>
     <div class="actions"><button class="btn" data-act="close">Tanca</button></div>`);
 }
@@ -847,6 +888,8 @@ async function finishPrint(ok) {
 $('#b-new').onclick = () => openEditor(null);
 $('#b-more').onclick = openMenu;
 $('#b-theme').onclick = openThemes;
+$('#brand').onclick = () => openDiaries().catch(err => fail(err, 'buscar els diaris'));
+$('#brand').onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); $('#brand').click() } };
 $('#b-print').onclick = openPrint;
 let searchT; $('#f-search').oninput = () => { clearTimeout(searchT); searchT = setTimeout(renderList, 150) };
 
@@ -880,8 +923,9 @@ document.addEventListener('click', async ev => {
     else if (a === 'refresh') { busy('Actualitzant'); data = await readData(); closeCard(); render() }
     else if (a === 'install') openInstall();
     else if (a === 'logout') logout();
-    else if (a === 'reset') openCard(`<h3>Buidar el diari?</h3><p>S'esborraran totes les entrades del llibre (no el Google Docs original ni les fotos preparades). Després podràs tornar a importar-ho tot.</p><div class="actions"><button class="btn" data-act="close">Cancel·la</button><button class="btn danger" data-act="doreset">Sí, buida-ho</button></div>`);
-    else if (a === 'doreset') { busy('Buidant'); await mutate(d => { d.entries = []; d.meta.imported = {}; d.meta.importProgress = {} }); closeCard(); render(); toast('Diari buit') }
+    else if (a === 'diaris') await openDiaries();
+    else if (a === 'opendiari') await switchDiari(b.dataset.id);
+    else if (a === 'newdiari') await newDiari($('#n-name').value.trim());
     else if (a === 'copyscript') {
       const id = b.dataset.doc; let code = '';
       try { code = await (await fetch('copiar-fotos.gs', { cache: 'no-store' })).text() } catch (e) {}
@@ -949,7 +993,7 @@ async function boot() {
         <div class="row" style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn primary" id="b-create">Crea el diari</button><button class="btn" id="b-retry">Torna a mirar</button></div>`);
       $('#b-retry').onclick = () => location.reload();
       $('#b-create').onclick = async () => {
-        try { $('#b-create').disabled = true; folderId = await createFolder(FOLDER_NAME); ls.set('diari.folder', folderId); data = emptyData(); await writeData(data); render() }
+        try { $('#b-create').disabled = true; folderId = await createFolder(FOLDER_NAME, null, DIARI_PROP); ls.set('diari.folder', folderId); data = emptyData(); await writeData(data); render() }
         catch (err) { fail(err, 'crear el diari'); $('#b-create').disabled = false }
       };
       return;
