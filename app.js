@@ -422,30 +422,57 @@ $('#f-docx').onchange = async ev => {
   } catch (err) { fail(err, 'importar el diari') }
 };
 
-/* Import groups of parsed entries (one group = one tab or one file). Each group is saved to Drive as a whole. */
+/* Import groups of parsed entries (one group = one tab or one file).
+   Saves to Drive every few days and remembers how far each tab got, so closing the app doesn't lose progress. */
+let importing = false, wakeLock = null;
+async function keepAwake(on) {
+  try { if (on && 'wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null } } catch (e) {}
+}
+window.addEventListener('beforeunload', e => { if (importing) { e.preventDefault(); e.returnValue = '' } });
+document.addEventListener('visibilitychange', () => { if (importing && document.visibilityState === 'visible') keepAwake(true) });
 async function runImport(groupsList, resolveImg) {
-  const total = groupsList.reduce((a, g) => a + g.entries.reduce((b, e) => b + e.imgs.length, 0), 0);
+  const prog0 = (data.meta && data.meta.importProgress) || {};
+  const skip = g => (g.key && prog0[g.key]) || 0;
+  const total = groupsList.reduce((a, g) => a + g.entries.slice(skip(g)).reduce((b, e) => b + e.imgs.length, 0), 0);
   let done = 0, nPh = 0, nEn = 0, nCh = 0, failed = 0;
-  for (const [gi, g] of groupsList.entries()) {
-    if (!token(900)) {
-      openCard(`<h3>Cal tornar a entrar</h3><p>Ja s'han importat ${gi} de ${groupsList.length} parts. Per seguretat Google demana tornar a entrar cada hora. Prem Continua i després torna a importar: les pestanyes que ja estan fetes surten desmarcades.</p>
-        <div class="actions"><button class="btn primary" data-act="login">Continua</button></div>`, true);
-      render(); return;
-    }
-    const out = [];
-    for (const [i, pe] of g.entries.entries()) {
-      const ph = [];
-      for (const im of pe.imgs) {
-        progress(`${g.label}: pujant fotos al Drive (${++done} de ${total})`, done / Math.max(total, 1));
-        const r = await resolveImg(im);
-        if (r) { ph.push(await uploadPhoto(r, pe.date || pe.title)); nPh++ } else failed++;
+  importing = true; keepAwake(true);
+  try {
+    for (const [gi, g] of groupsList.entries()) {
+      const from = skip(g);
+      let out = [];
+      const flush = async (last, upto) => {
+        const b = out; out = [];
+        await mutate(d => {
+          d.entries.push(...b);
+          if (g.key) {
+            d.meta.importProgress = d.meta.importProgress || {};
+            if (last) { delete d.meta.importProgress[g.key]; d.meta.imported = d.meta.imported || {}; d.meta.imported[g.key] = Date.now() }
+            else d.meta.importProgress[g.key] = upto;
+          }
+        });
+      };
+      for (let i = from; i < g.entries.length; i++) {
+        if (!token(600)) {
+          if (out.length) await flush(false, i);
+          importing = false; keepAwake(false);
+          openCard(`<h3>Cal tornar a entrar</h3><p>Google demana tornar a entrar cada hora. El que s'ha importat fins ara està desat. Prem Continua i després torna a <b>Importa del Google Docs</b>: continuarà on s'ha quedat.</p>
+            <div class="actions"><button class="btn primary" data-act="login">Continua</button></div>`, true);
+          render(); return;
+        }
+        const pe = g.entries[i], ph = [];
+        for (const im of pe.imgs) {
+          progress(`${g.label}: dia ${i + 1} de ${g.entries.length} · fotos ${++done} de ${total}`, done / Math.max(total, 1));
+          const r = await resolveImg(im);
+          if (r) { ph.push(await uploadPhoto(r, pe.date || pe.title)); nPh++ } else failed++;
+        }
+        out.push({ id: uid(), chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: ph, variant: i % 2 });
+        pe.chapter ? nCh++ : nEn++;
+        const last = i === g.entries.length - 1;
+        if (last || out.length >= 4) { progress(`${g.label}: desant…`); await flush(last, i + 1) }
       }
-      out.push({ id: uid(), chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: ph, variant: i % 2 });
-      pe.chapter ? nCh++ : nEn++;
+      if (g.entries.length === from) await flush(true, from);
     }
-    progress(`${g.label}: desant…`);
-    await mutate(d => { d.entries.push(...out); if (g.key) { d.meta.imported = d.meta.imported || {}; d.meta.imported[g.key] = Date.now() } });
-  }
+  } finally { importing = false; keepAwake(false) }
   closeCard(); render();
   toast(`Fet: ${nCh ? nCh + ' capítols, ' : ''}${nEn} entrades i ${nPh} fotos.${failed ? ` ${failed} fotos no s'han pogut copiar.` : ''}`, 6000);
 }
@@ -468,12 +495,13 @@ async function openDocsImport() {
 async function pickDoc(id) {
   try {
     busy('Llegint el document', 'Pot trigar una mica si té moltes fotos…');
+    data = await readData();
     const doc = await fetchDoc(id, true);
     const imp = (data.meta && data.meta.imported) || {};
     const rows = doc.tabs.map(t => {
       const blocks = tabBlocks(t), nImg = blocks.reduce((a, b) => a + b.imgs.length, 0), nDates = blocks.filter(b => b.t && isDateLine(b.t.replace(/\n/g, ' '))).length;
-      const done = imp[id + ':' + t.id];
-      return `<label class="chk"><input type="checkbox" data-tab="${esc(t.id)}" ${done ? '' : 'checked'}> <span><b>${esc(t.title || 'Pestanya')}</b> · ${nDates} dies, ${nImg} fotos${done ? ' · <i>ja importada</i>' : ''}</span></label>`;
+      const done = imp[id + ':' + t.id], part = ((data.meta && data.meta.importProgress) || {})[id + ':' + t.id];
+      return `<label class="chk"><input type="checkbox" data-tab="${esc(t.id)}" ${done ? '' : 'checked'}> <span><b>${esc(t.title || 'Pestanya')}</b> · ${nDates} dies, ${nImg} fotos${done ? ' · <i>ja importada</i>' : part ? ' · <i>a mitges, continuarà on es va quedar</i>' : ''}</span></label>`;
     }).join('');
     openCard(`<h3>${esc(doc.name || 'Document')}</h3><p>Tria les pestanyes que vols portar al llibre. Cada pestanya serà un capítol.</p>
       <div class="menu" id="tabs">${rows || '<p>El document és buit.</p>'}</div>
