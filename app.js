@@ -660,7 +660,7 @@ function drawThumbs() {
 }
 function openEditor(e, draft) {
   try { ensureToken(1500) } catch (err) { return }
-  edit = { id: e ? e.id : null, photos: e ? (e.photos || []).slice() : [], removed: [] };
+  edit = { id: e ? e.id : null, photos: e ? (e.photos || []).map(p => ({ ...p })) : [], removed: [] };
   openCard(editorHTML(e, draft)); drawThumbs();
   const pick = $('#f-pick'); if (pick) pick.onchange = ev => { if (ev.target.value) $('#f-date').value = fmtDate(ev.target.value) };
   $('#f-photos').onchange = async ev => {
