@@ -1,4 +1,4 @@
-/* Diari de Pauete i Maruxi — web-app
+/* Diaris Nidia — web-app (first diary: «Diari de Pauete i Maruxi»)
    Content lives in a Google Drive folder (diari.json + fotos/), login with Google (OAuth implicit redirect). */
 (() => {
 'use strict';
@@ -75,8 +75,9 @@ async function list(q, fields = 'files(id,name,ownedByMe,modifiedTime)') {
   return r.files || [];
 }
 const qName = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-async function createFolder(name, parent) {
-  const body = { name, mimeType: FOLDER_MIME }; if (parent) body.parents = [parent];
+const DIARI_PROP = { diari: '1' }; // marks the folders the app creates as diaries
+async function createFolder(name, parent, props) {
+  const body = { name, mimeType: FOLDER_MIME }; if (parent) body.parents = [parent]; if (props) body.appProperties = props;
   const r = await getJSON(`${DRIVE}/files?fields=id&supportsAllDrives=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   return r.id;
 }
@@ -103,6 +104,11 @@ async function locateFolder() {
   for (const c of cands) { folderId = c.id; if (await findDataFile()) { ls.set('diari.folder', c.id); return true } }
   if (cands[0]) { folderId = cands[0].id; ls.set('diari.folder', folderId); return true }
   folderId = null; return false;
+}
+/* every diary is its own Drive folder; the first one was found by name, new ones carry DIARI_PROP */
+async function listDiaries() {
+  const names = [...new Set([FOLDER_NAME, OLD_NAME])].map(n => `name='${qName(n)}'`).join(' or ');
+  return list(`mimeType='${FOLDER_MIME}' and trashed=false and (appProperties has { key='diari' and value='1' } or ${names})`);
 }
 async function ensurePhotosFolder() {
   if (photosFolderId) return photosFolderId;
@@ -371,7 +377,7 @@ function gridHTML(P, variant) {
   } else areas = '"a b" "c d"';
   const ncols = areas.split('"')[1].split(' ').length;
   const st = `grid-template-areas:${areas};grid-template-columns:${cols || `repeat(${ncols},1fr)`};${rows ? `grid-template-rows:${rows};` : ''}`;
-  return `<div class="ph" style='${st}'>${P.map((p, i) => `<figure style="grid-area:${'abcd'[i]}">${imgTag(p)}</figure>`).join('')}</div>`;
+  return `<div class="ph" style='${st}'>${P.map((p, i) => `<figure style="grid-area:${'abcd'[i]}"${p.s ? ` class="s-${p.s}"` : ''}>${imgTag(p)}</figure>`).join('')}</div>`;
 }
 function pageHTML(p, num, ents) {
   if (p.kind === 'cover') {
@@ -383,36 +389,80 @@ function pageHTML(p, num, ents) {
       <div class="ct"><h1>${esc(data.meta.title || DEFAULT_TITLE)}</h1>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>
       ${range ? `<div class="range">${esc(range)}</div>` : ''}</div>`;
   }
-  const e = p.e, v = e.variant || 0, pn = `<div class="pn">${num}</div>`, lay = e.lay || {};
+  const e = p.e, v = e.variant || 0, side = num % 2 ? 'verso' : 'recto', lay = e.lay || {};
   const lc = ` sz-${lay.size || 'm'}${lay.fit === 'contain' ? ' fit-contain' : ''}`;
+  const pn = `<div class="pn">${num}</div>`, run = !e.chapter && chOf.get(e.id) ? `<div class="run">${esc(chOf.get(e.id))}</div>` : '';
   const txt = l => `<div class="txt">${l.map(t => `<p>${esc(t)}</p>`).join('')}</div>`;
   if (p.kind === 'chapter') {
     const y = (e.title.match(reYear) || [''])[0];
-    return `<div class="page p-chapter${lc}"><div class="chh">${y ? `<div class="yr">${y}</div>` : ''}<div class="cht">${esc(e.title)}</div></div>${p.paras.length ? txt(p.paras) : ''}${p.photos.length ? gridHTML(p.photos, v) : ''}${pn}</div>`;
+    return `<div class="page p-chapter${lc}"><div class="chh">${y ? `<div class="yr">${y}</div>` : ''}${e.title && e.title !== y ? `<div class="cht">${esc(e.title)}</div>` : ''}</div>${p.paras.length ? txt(p.paras) : ''}${p.photos.length ? gridHTML(p.photos, v) : ''}${pn}</div>`;
   }
-  if (p.kind === 'entry') return `<div class="page p-entry ${p.photos.length ? '' : 'p-text'} v${v}${lc}">
+  if (p.kind === 'entry') return `<div class="page p-entry ${side} ${p.photos.length ? '' : 'p-text'} v${v}${lc}">${run}
       <div class="eh">${e.date ? `<div class="date">${esc(e.date)}</div>` : ''}${e.title ? `<h2>${esc(e.title)}</h2>` : ''}</div>
       ${p.paras.length ? txt(p.paras) : ''}${p.photos.length ? gridHTML(p.photos, v) : ''}${pn}</div>`;
-  if (p.kind === 'text') return `<div class="page p-text"><div class="rh">${esc(e.date || e.title)} · continua</div>${txt(p.paras)}${pn}</div>`;
-  return `<div class="page p-gallery${lc}"><div class="rh">${esc(e.date || e.title)}</div>${gridHTML(p.photos, (v + num) % 2)}${pn}</div>`;
+  if (p.kind === 'text') return `<div class="page p-text ${side}">${run}<div class="rh">${esc(e.date || e.title)} · continua</div>${txt(p.paras)}${pn}</div>`;
+  return `<div class="page p-gallery ${side}${lc}">${run}<div class="rh">${esc(e.date || e.title)}</div>${gridHTML(p.photos, (v + num) % 2)}${pn}</div>`;
 }
 
 /* ================= render ================= */
 const book = $('#book');
+const listEl = $('#list');
 function showScreen(html) {
-  const s = $('#s-loading'); s.innerHTML = html; s.hidden = false; book.hidden = true;
+  const s = $('#s-loading'); s.innerHTML = html; s.hidden = false; $('#layout').hidden = true;
 }
-function renderGroupSelect() {
-  const gs = groupsOf(data.entries), sel = $('#f-group');
+function renderNav() {
+  const gs = groupsOf(data.entries), nav = $('#nav');
   if (group !== 'all' && !gs.some(g => g.key === group)) group = 'all';
-  sel.innerHTML = `<option value="all">Tot el llibre</option>` + gs.map(g => `<option value="${esc(g.key)}">${esc(g.title)}</option>`).join('');
-  sel.value = group; sel.parentElement.hidden = gs.length < 2;
+  const item = (key, title) => `<button class="nav-i${group === key ? ' on' : ''}" type="button" data-act="group" data-g="${esc(key)}"${group === key ? ' aria-current="true"' : ''}>${esc(title)}</button>`;
+  nav.innerHTML = item('all', 'Tot el llibre') + (gs.length > 1 ? gs.map(g => item(g.key, g.title)).join('') : '');
+}
+/* entry list (middle column): click jumps to the entry's page */
+const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+function renderList() {
+  const q = norm($('#f-search').value.trim());
+  const ents = q ? data.entries.filter(e => norm([e.date, e.title, ...(e.paras || [])].join(' ')).includes(q)) : selectedEntries();
+  const g = groupsOf(data.entries).find(g => g.key === group);
+  const head = q ? 'Resultats' : group === 'all' ? 'Tot el llibre' : (g ? g.title : 'Tot el llibre');
+  const nDays = ents.filter(e => !e.chapter).length;
+  listEl.innerHTML = `<div class="list-h"><h2>${q ? 'Resultats' : 'Índex'}</h2><span>${q ? '' : esc(head) + ' · '}${nDays} ${nDays === 1 ? 'dia' : 'dies'}</span></div>`
+    + (ents.length ? ents.map(e => {
+      const pg = pageNo.has(e.id) ? `<span class="li-p">${pageNo.get(e.id)}</span>` : '';
+      if (e.chapter) return `<button class="li-ch" type="button" data-act="goto" data-id="${e.id}"><span>${esc(e.title || 'Capítol')}</span>${pg}</button>`;
+      return `<button class="li" type="button" data-act="goto" data-id="${e.id}">
+        <span class="li-row"><span class="li-h">${esc(e.title || e.date || 'Sense títol')}</span><span class="li-dots"></span>${pg}</span>
+        ${e.title && e.date ? `<span class="li-d">${esc(e.date)}</span>` : ''}</button>`;
+    }).join('') : `<p class="muted li-none">${q ? 'No hi ha cap entrada amb aquestes paraules.' : 'Encara no hi ha entrades.'}</p>`);
+  listEl.querySelectorAll('img[data-pid]').forEach(img => { if (mem.has(img.dataset.pid)) loadImg(img); else io.observe(img) });
+  markActive(activeId);
+}
+let activeId = null;
+const pageNo = new Map(), chOf = new Map();
+function markActive(id) {
+  activeId = id;
+  listEl.querySelectorAll('[data-act=goto].on').forEach(b => b.classList.remove('on'));
+  const b = id && listEl.querySelector(`[data-act=goto][data-id="${id}"]`); if (!b) return;
+  b.classList.add('on');
+  if (listEl.scrollHeight > listEl.clientHeight) {
+    const top = b.offsetTop, bot = top + b.offsetHeight;
+    if (top < listEl.scrollTop + 50) listEl.scrollTop = top - 50; else if (bot > listEl.scrollTop + listEl.clientHeight) listEl.scrollTop = bot - listEl.clientHeight + 12;
+  }
+}
+const seen = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) markActive(e.target.dataset.eid) }), { rootMargin: '-35% 0px -60% 0px' });
+function gotoEntry(id) {
+  let s = book.querySelector(`.sheet[data-eid="${id}"]`);
+  if (!s && group !== 'all') { group = 'all'; ls.set('diari.group', group); render(); s = book.querySelector(`.sheet[data-eid="${id}"]`) }
+  if (!s) return;
+  s.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  markActive(id);
 }
 function render() {
-  $('#bar').hidden = false; $('#s-loading').hidden = true; book.hidden = false;
-  renderGroupSelect();
-  book.dataset.theme = (data.meta && data.meta.theme) || 'classic';
+  $('#bar').hidden = false; $('#s-loading').hidden = true; $('#layout').hidden = false;
+  if (data.meta && data.meta.theme) applyTheme(data.meta.theme);
+  $('#brand').textContent = data.meta.title || DEFAULT_TITLE;
+  renderNav();
+  seen.disconnect();
   if (!data.entries.length) {
+    listEl.innerHTML = '';
     book.innerHTML = `<div class="empty"><h2>El diari és buit</h2>
       <p>Pots portar-hi el que ja teniu al Google Docs o començar amb una entrada nova.</p>
       <p class="muted">L'app llegeix el document directament del vostre Google Drive, amb totes les pestanyes i les fotos. No cal baixar res.</p>
@@ -421,12 +471,16 @@ function render() {
   }
   const ents = selectedEntries();
   const pages = (printSel && !printSel.cover) ? [] : [{ kind: 'cover' }]; ents.forEach(e => pages.push(...entryPages(e)));
+  pageNo.clear(); chOf.clear();
+  pages.forEach((p, i) => { if (p.first && !pageNo.has(p.e.id)) pageNo.set(p.e.id, i) });
+  { let ch = ''; for (const e of data.entries) { if (e.chapter) ch = e.title || ''; chOf.set(e.id, ch) } }
   book.innerHTML = pages.map((p, i) => {
     const tools = p.kind === 'cover' ? `<button data-act="cover">Edita portada</button>` :
       p.first ? `<button data-act="layout" data-id="${p.e.id}">Fotos</button><button data-act="edit" data-id="${p.e.id}">Edita</button>` : '';
-    return `<div class="sheet ${p.kind === 'cover' ? 'cover' : ''}"><div class="tools">${tools}</div>${pageHTML(p, i, ents)}</div>`;
+    return `<div class="sheet ${p.kind === 'cover' ? 'cover' : ''}"${p.first ? ` data-eid="${p.e.id}"` : ''}><div class="tools">${tools}</div>${pageHTML(p, i, ents)}</div>`;
   }).join('');
-  scale(); fitText();
+  scale(); fitText(); renderList();
+  book.querySelectorAll('.sheet[data-eid]').forEach(s => seen.observe(s));
   book.querySelectorAll('img[data-pid]').forEach(img => { if (mem.has(img.dataset.pid)) loadImg(img); else io.observe(img) });
 }
 function scale() { const s = book.querySelector('.sheet'); if (s) book.style.setProperty('--s', s.clientWidth / (210 * 96 / 25.4)) }
@@ -683,7 +737,7 @@ async function openBackupInfo() {
 let edit = null; // {id|null, photos:[{id,w,h}|{tmp,blob,w,h,url}], removed:[]}
 function saveDraft() {
   if (!edit || !$('#f-text')) return;
-  ls.set('diari.draft', JSON.stringify({ id: edit.id, date: $('#f-date').value, title: $('#f-title').value, text: $('#f-text').value }));
+  ls.set('diari.draft', JSON.stringify({ id: edit.id, date: ($('#f-date') || {}).value || '', title: $('#f-title').value, text: $('#f-text').value }));
 }
 function editorHTML(e, draft) {
   const date = draft ? draft.date : e ? e.date : fmtDate(new Date().toISOString().slice(0, 10));
@@ -695,20 +749,24 @@ function editorHTML(e, draft) {
     <div class="fld" style="flex:0 1 170px"><label for="f-pick">Tria al calendari</label><input type="date" id="f-pick"></div></div>`}
   <div class="fld"><label for="f-title">${e && e.chapter ? 'Títol del capítol' : 'Títol (opcional)'}</label><input type="text" id="f-title" value="${esc(title)}"></div>
   <div class="fld"><label for="f-text">${e && e.chapter ? 'Text (opcional)' : 'El que ha passat'}</label><textarea id="f-text" placeholder="Escriu aquí. Deixa una línia en blanc per començar un paràgraf nou.">${esc(text)}</textarea></div>
-  <div class="fld"><label>Fotos</label><div class="thumbs" id="thumbs"></div><input class="hid" type="file" id="f-photos" accept="image/*" multiple></div>
+  <div class="fld"><label>Fotos</label><p class="hint">Toca «Gran» per fer una foto més petita al llibre. Amb ‹ › canvies l'ordre.</p><div class="thumbs" id="thumbs"></div><input class="hid" type="file" id="f-photos" accept="image/*" multiple></div>
   ${e ? '' : `<label class="chk"><input type="checkbox" id="f-chapter"> És l'inici d'un capítol nou (per exemple, un any)</label>`}
   <div class="actions"><div class="left">${e ? `<button class="btn danger" data-act="del">Esborra</button>${idx > 0 ? `<button class="btn" data-act="merge">Uneix amb l'anterior</button>` : ''}` : ''}</div>
     <button class="btn" data-act="close">Cancel·la</button><button class="btn primary" data-act="save">Desa</button></div>`;
 }
+/* photo size on the page: g = gran (fills its space), m = mitjana, p = petita */
+const SIZES = { g: 'Gran', m: 'Mitjana', p: 'Petita' }, NEXT_SIZE = { g: 'm', m: 'p', p: 'g' };
 function drawThumbs() {
-  $('#thumbs').innerHTML = edit.photos.map((p, i) => `<div class="thumb"><img data-tpid="${p.tmp ? '' : esc(p.id)}" src="${p.tmp ? p.url : (mem.get(p.id) || '')}" alt="Foto ${i + 1}"><div class="tb">
-    <button data-act="left" data-i="${i}" aria-label="Mou abans"${i ? '' : ' style="visibility:hidden"'}>‹</button><button data-act="rm" data-i="${i}" aria-label="Treu la foto">✕</button></div></div>`).join('')
+  const n = edit.photos.length;
+  $('#thumbs').innerHTML = edit.photos.map((p, i) => `<div class="thumb">
+    <div class="th-img s-${p.s || 'g'}"><img data-tpid="${p.tmp ? '' : esc(p.id)}" src="${p.tmp ? p.url : (mem.get(p.id) || '')}" alt="Foto ${i + 1}"><span class="th-n">${i + 1}</span><button type="button" class="th-rm" data-act="rm" data-i="${i}" aria-label="Treu la foto ${i + 1}">✕</button></div>
+    <div class="th-ctl"><button type="button" data-act="left" data-i="${i}" aria-label="Mou la foto ${i + 1} abans"${i ? '' : ' disabled'}>‹</button><button type="button" class="th-size" data-act="size" data-i="${i}" aria-label="Mida de la foto ${i + 1}">${SIZES[p.s || 'g']}</button><button type="button" data-act="right" data-i="${i}" aria-label="Mou la foto ${i + 1} després"${i < n - 1 ? '' : ' disabled'}>›</button></div></div>`).join('')
     + `<button class="add-ph" data-act="addph" type="button">+ Afegeix fotos</button>`;
   $('#thumbs').querySelectorAll('img[data-tpid]').forEach(img => { const id = img.dataset.tpid; if (id && !img.getAttribute('src')) photoURL(id).then(u => img.src = u).catch(() => {}) });
 }
 function openEditor(e, draft) {
   try { ensureToken(1500) } catch (err) { return }
-  edit = { id: e ? e.id : null, photos: e ? (e.photos || []).slice() : [], removed: [] };
+  edit = { id: e ? e.id : null, photos: e ? (e.photos || []).map(p => ({ ...p })) : [], removed: [] };
   openCard(editorHTML(e, draft)); drawThumbs();
   const pick = $('#f-pick'); if (pick) pick.onchange = ev => { if (ev.target.value) $('#f-date').value = fmtDate(ev.target.value) };
   $('#f-photos').onchange = async ev => {
@@ -729,19 +787,89 @@ async function saveEditor() {
     busy('Desant', fresh.length ? `Pujant fotos: 0 de ${fresh.length}` : 'Desant al Drive…');
     const ph = []; let n = 0;
     for (const p of ed.photos) {
-      if (p.tmp) { progress(`Pujant fotos: ${++n} de ${fresh.length}`, n / fresh.length); ph.push(await uploadPhoto(p, fields.date || fields.title)) }
+      if (p.tmp) { progress(`Pujant fotos: ${++n} de ${fresh.length}`, n / fresh.length); const up = await uploadPhoto(p, fields.date || fields.title); if (p.s) up.s = p.s; ph.push(up) }
       else ph.push(p);
     }
     progress('Desant al Drive…');
+    const sid = ed.id || uid();
     await mutate(d => {
       const x = ed.id && d.entries.find(y => y.id === ed.id);
       if (x) Object.assign(x, fields, { photos: ph });
-      else d.entries.push({ id: ed.id || uid(), variant: d.entries.length % 2, chapter: !!(chEl && chEl.checked), ...fields, photos: ph });
+      else d.entries.push({ id: sid, variant: d.entries.length % 2, chapter: !!(chEl && chEl.checked), ...fields, photos: ph });
     });
     for (const id of ed.removed) await trashFile(id);
     ls.del('diari.draft'); closeCard(); render(); toast('Desat');
     backupPending(false);
   } catch (err) { fail(err, 'desar') }
+}
+
+/* ================= colour themes (shared by everyone through diari.json, so the printed book matches) ================= */
+const THEMES = [
+  {"key": "blau", "name": "Blau", "desc": "Blau cel i taronja", "sw": ["#e8edf4", "#2d5da8", "#e09a3b", "#fffefb"], "vars": {"--desk": "#e8edf4", "--panel": "#f6f8fb", "--ink": "#1d2735", "--muted": "#66728a", "--line": "#d3dbe7", "--accent": "#2d5da8", "--accent-soft": "#dbe4f3", "--clay": "#e09a3b", "--paper-ink": "#1d2735", "--paper-soft": "#77829a", "--paper-accent": "#2d5da8", "--paper-clay": "#d08a2c", "--paper-line": "#d5dce8", "--photo-bg": "#e6ebf3"}},
+  {"key": "bosc", "name": "Bosc", "desc": "Verd bosc i terracota", "sw": ["#ece5da", "#3e5a48", "#a5583c", "#fffefb"], "vars": {}},
+  {"key": "tinta", "name": "Tinta", "desc": "Blau marí i mostassa", "sw": ["#e9e8e4", "#28385a", "#c08a2d", "#fffefb"], "vars": {"--desk": "#e9e8e4", "--panel": "#f7f6f2", "--ink": "#1f2430", "--muted": "#6e717a", "--line": "#d6d4cd", "--accent": "#28385a", "--accent-soft": "#dfe3ec", "--clay": "#c08a2d", "--paper-ink": "#1f2430", "--paper-soft": "#7d7f86", "--paper-accent": "#28385a", "--paper-clay": "#b07c22", "--paper-line": "#d8d6cf"}},
+  {"key": "mar", "name": "Mar", "desc": "Verd aigua i corall", "sw": ["#e6ecea", "#2f6f6a", "#d06a4e", "#fffefb"], "vars": {"--desk": "#e6ecea", "--panel": "#f5f8f7", "--ink": "#1f2b2a", "--muted": "#677572", "--line": "#d0dad7", "--accent": "#2f6f6a", "--accent-soft": "#dbe9e6", "--clay": "#d06a4e", "--paper-ink": "#1f2b2a", "--paper-soft": "#76827f", "--paper-accent": "#2f6f6a", "--paper-clay": "#c4603f", "--paper-line": "#d2dbd8", "--photo-bg": "#e8eeec"}},
+  {"key": "vi", "name": "Vi", "desc": "Granat i daurat", "sw": ["#efe7e6", "#6e2f45", "#b9864a", "#fffefb"], "vars": {"--desk": "#efe7e6", "--panel": "#faf6f5", "--ink": "#2e2124", "--muted": "#806c70", "--line": "#e0d2d1", "--accent": "#6e2f45", "--accent-soft": "#f0e0e4", "--clay": "#b9864a", "--paper-ink": "#2e2124", "--paper-soft": "#8a777b", "--paper-accent": "#6e2f45", "--paper-clay": "#a97a3f", "--paper-line": "#e2d5d4", "--photo-bg": "#f1e9e8"}},
+  {"key": "crema", "name": "Crema", "desc": "Crema i terracota, com la teva imatge", "sw": ["#f7efe4", "#c9694b", "#7a2e20", "#fffaf3"], "vars": {"--desk": "#f7efe4", "--panel": "#fffaf4", "--ink": "#3b2a22", "--muted": "#8b7565", "--line": "#ecdccb", "--accent": "#c9694b", "--accent-soft": "#f9e4d7", "--clay": "#7a2e20", "--paper": "#fffcf7", "--paper-ink": "#3b2a22", "--paper-soft": "#9a8373", "--paper-accent": "#b35a3d", "--paper-clay": "#7a2e20", "--paper-line": "#e6d3c1", "--photo-bg": "#f2e7da"}},
+  {"key": "llapis", "name": "Llapis", "desc": "Blanc i negre: estalvia tinta de color", "sw": ["#ebebea", "#333333", "#8c8c86", "#ffffff"], "vars": {"--desk": "#ebebea", "--panel": "#f8f8f7", "--ink": "#222222", "--muted": "#6f6f6c", "--line": "#d8d8d4", "--accent": "#333333", "--accent-soft": "#e6e6e3", "--clay": "#8c8c86", "--paper": "#ffffff", "--paper-ink": "#222222", "--paper-soft": "#7d7d79", "--paper-accent": "#2b2b2b", "--paper-clay": "#7a7a74", "--paper-line": "#d9d9d5", "--photo-bg": "#eeeeee"}}
+];
+const OLD_THEMES = { classic: 'blau', cel: 'blau', mari: 'tinta' };
+function applyTheme(key) {
+  key = OLD_THEMES[key] || key;
+  const t = THEMES.find(x => x.key === key) || THEMES[0], st = document.documentElement.style;
+  THEMES.forEach(x => Object.keys(x.vars).forEach(v => st.removeProperty(v)));
+  Object.entries(t.vars).forEach(([v, c]) => st.setProperty(v, c));
+  const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = t.sw[0];
+  document.documentElement.dataset.diariTheme = t.key;
+  ls.set('diari.theme', t.key);
+}
+applyTheme(ls.get('diari.theme'));
+function openThemes() {
+  const k0 = (data.meta && data.meta.theme) || ls.get('diari.theme') || THEMES[0].key, cur = OLD_THEMES[k0] || k0;
+  openCard(`<h3>Colors del diari</h3><p>Tria els colors que més t'agradin. Es veuen a l'app i al llibre imprès, i els veureu tots dos.</p>
+    <div class="themes">${THEMES.map(t => `<button class="theme${t.key === cur ? ' on' : ''}" type="button" data-act="pickt" data-k="${t.key}" aria-pressed="${t.key === cur}">
+      <span class="sw">${t.sw.map(c => `<i style="background:${c}"></i>`).join('')}</span><b>${esc(t.name)}</b><small>${esc(t.desc)}</small></button>`).join('')}</div>
+    <div class="actions"><button class="btn primary" data-act="close">Fet</button></div>`);
+}
+async function pickTheme(key) {
+  applyTheme(key);
+  card.querySelectorAll('.theme').forEach(b => { const on = b.dataset.k === key; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on) });
+  data.meta.theme = key;
+  await mutate(d => { d.meta.theme = key });
+}
+
+/* ================= several diaries ================= */
+async function openDiaries() {
+  busy('Diaris', 'Buscant els diaris…');
+  const ds = await listDiaries();
+  if (folderId && !ds.some(d => d.id === folderId)) ds.unshift({ id: folderId, name: data.meta.title || FOLDER_NAME });
+  openCard(`<h3>Diaris</h3><p>Podeu tenir més d'un diari. Cadascun té les seves entrades, fotos i colors, i no es barregen. Tria quin vols obrir.</p>
+    <div class="menu">${ds.map(d => `<button class="btn diari${d.id === folderId ? ' on' : ''}" type="button" data-act="opendiari" data-id="${esc(d.id)}"${d.id === folderId ? ' aria-current="true"' : ''}><span>${esc(d.name)}</span><small>${d.id === folderId ? 'obert ara' : d.ownedByMe === false ? 'compartit amb tu' : ''}</small></button>`).join('')}</div>
+    <div class="row"><div class="fld"><label for="n-name">Crea un diari nou</label><input type="text" id="n-name" placeholder="Per exemple: Viatge a Menorca"></div><button class="btn" data-act="newdiari" type="button">Crea'l</button></div>
+    <p class="muted">Crear un diari nou no toca els altres: «${esc(data.meta.title || DEFAULT_TITLE)}» es queda tal com està.</p>
+    <div class="actions"><button class="btn primary" data-act="close">Tanca</button></div>`);
+}
+async function loadDiari(id) {
+  folderId = id; dataFileId = null; photosFolderId = null; bk = null; ls.set('diari.folder', id);
+  group = 'all'; ls.set('diari.group', group); $('#f-search').value = ''; activeId = null;
+  data = await readData();
+}
+async function switchDiari(id) {
+  if (id === folderId) { closeCard(); return }
+  busy('Obrint el diari');
+  await loadDiari(id);
+  applyTheme(data.meta.theme || THEMES[0].key);
+  closeCard(); render(); window.scrollTo(0, 0);
+}
+async function newDiari(name) {
+  if (!name) { toast('Posa-li un nom.'); $('#n-name').focus(); return }
+  busy('Creant el diari', '«' + name + '»');
+  const theme = data.meta.theme || ls.get('diari.theme');
+  const id = await createFolder(name, null, DIARI_PROP);
+  await loadDiari(id);
+  data = emptyData(); data.meta.title = name; if (theme) data.meta.theme = theme;
+  await writeData(data);
+  closeCard(); render(); window.scrollTo(0, 0); toast('Diari creat: ' + name);
 }
 
 /* ---- photo layout of one entry (size, how many on the first page, crop/whole, above/below text) ---- */
@@ -764,9 +892,9 @@ function openLayout(e) {
 }
 function drawLayThumbs() {
   const box = $('#lthumbs'); if (!box) return;
-  const e = data.entries.find(x => x.id === layEdit.id);
-  box.innerHTML = e.photos.map((p, i) => `<div class="thumb"><img data-tpid="${esc(p.id)}" src="${mem.get(p.id) || ''}" alt="Foto ${i + 1}"><div class="tb">
-    <button data-act="layleft" data-i="${i}" aria-label="Mou abans"${i ? '' : ' style="visibility:hidden"'}>‹</button><button data-act="layright" data-i="${i}" aria-label="Mou després"${i < e.photos.length - 1 ? '' : ' style="visibility:hidden"'}>›</button></div></div>`).join('');
+  const e = data.entries.find(x => x.id === layEdit.id), n = e.photos.length;
+  box.innerHTML = e.photos.map((p, i) => `<div class="thumb"><div class="th-img"><img data-tpid="${esc(p.id)}" src="${mem.get(p.id) || ''}" alt="Foto ${i + 1}"><span class="th-n">${i + 1}</span></div>
+    <div class="th-ctl"><button type="button" data-act="layleft" data-i="${i}" aria-label="Mou la foto ${i + 1} abans"${i ? '' : ' disabled'}>‹</button><span class="th-sp"></span><button type="button" data-act="layright" data-i="${i}" aria-label="Mou la foto ${i + 1} després"${i < n - 1 ? '' : ' disabled'}>›</button></div></div>`).join('');
   box.querySelectorAll('img[data-tpid]').forEach(img => { if (!img.getAttribute('src')) photoURL(img.dataset.tpid).then(u => img.src = u).catch(() => {}) });
 }
 function jumpTo(id) {
@@ -784,22 +912,15 @@ function layApply(k, v) {
 function openMenu() {
   openCard(`<h3>Més opcions</h3><div class="menu">
     <button class="btn" data-act="docsimport">Importa del Google Docs</button>
+    <button class="btn" data-act="diaris">Canvia de diari o crea'n un de nou</button>
+    <button class="btn" data-act="themes">Colors del diari</button>
     <button class="btn" data-act="cover">Edita la portada</button>
-    <button class="btn" data-act="theme">Colors del llibre</button>
     <button class="btn" data-act="backupinfo">Còpia de seguretat</button>
     <button class="btn" data-act="share">Comparteix el diari amb algú</button>
     <button class="btn" data-act="refresh">Actualitza (veure els canvis de l'altre)</button>
     <button class="btn" data-act="install">Posa-la a la pantalla del mòbil</button>
-    <button class="btn" data-act="reset">Buida el diari i torna a començar</button>
     <button class="btn" data-act="logout">Surt</button></div>
     <div class="actions"><button class="btn" data-act="close">Tanca</button></div>`);
-}
-const THEMES = [['classic', 'Clàssic', 'Paper crema i títols blau fosc'], ['cel', 'Blau cel', 'Paper blau molt clar i detalls blau cel'], ['mari', 'Blau marí', 'Paper blanc, títols blau marí i capítols a tota pàgina en blau']];
-function openTheme() {
-  const cur = (data.meta && data.meta.theme) || 'classic';
-  openCard(`<h3>Colors del llibre</h3><p>S'aplica a tot el llibre, també quan s'imprimeix.</p>
-    <div class="themes">${THEMES.map(([k, t, d]) => `<button type="button" class="theme-opt ${k === cur ? 'on' : ''}" data-act="settheme" data-v="${k}"><span class="sw sw-${k}"><i></i><b></b></span><span><b>${t}</b><br><small>${d}</small></span></button>`).join('')}</div>
-    <div class="actions"><button class="btn primary" data-act="close">Fet</button></div>`);
 }
 function openCover() {
   openCard(`<h3>Portada</h3>
@@ -907,8 +1028,11 @@ async function finishPrint(ok) {
 /* ================= events ================= */
 $('#b-new').onclick = () => openEditor(null);
 $('#b-more').onclick = openMenu;
+$('#b-theme').onclick = openThemes;
+$('#brand').onclick = () => openDiaries().catch(err => fail(err, 'buscar els diaris'));
+$('#brand').onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); $('#brand').click() } };
 $('#b-print').onclick = openPrint;
-$('#f-group').onchange = ev => { group = ev.target.value; ls.set('diari.group', group); render(); window.scrollTo(0, 0) };
+let searchT; $('#f-search').oninput = () => { clearTimeout(searchT); searchT = setTimeout(renderList, 150) };
 
 document.addEventListener('click', async ev => {
   const b = ev.target.closest('[data-act]'); if (!b) return;
@@ -916,6 +1040,8 @@ document.addEventListener('click', async ev => {
   try {
     if (a === 'close') closeCard();
     else if (a === 'login') login();
+    else if (a === 'group') { group = b.dataset.g; ls.set('diari.group', group); $('#f-search').value = ''; render(); window.scrollTo(0, 0) }
+    else if (a === 'goto') gotoEntry(b.dataset.id);
     else if (a === 'new') { closeCard(); openEditor(null) }
     else if (a === 'import') { closeCard(); $('#f-docx').click() }
     else if (a === 'docsimport') openDocsImport();
@@ -938,12 +1064,12 @@ document.addEventListener('click', async ev => {
       const x = data.entries.find(y => y.id === layEdit.id); layEdit = null; closeCard();
       if (x) { const id = x.id, lay = x.lay, variant = x.variant || 0, photos = x.photos; busy('Desant'); await mutate(d => { const y = d.entries.find(z => z.id === id); if (y) { if (lay && Object.keys(lay).length) y.lay = lay; else delete y.lay; y.variant = variant; y.photos = photos } }); closeCard(); render(); jumpTo(id); toast('Desat') }
     }
-    else if (a === 'theme') openTheme();
-    else if (a === 'settheme') { const v = b.dataset.v; data.meta.theme = v; render(); card.querySelectorAll('.theme-opt').forEach(x => x.classList.toggle('on', x.dataset.v === v)); await mutate(d => { d.meta.theme = v }); toast('Colors desats') }
     else if (a === 'backupinfo') openBackupInfo();
     else if (a === 'backupall') backupPending(true);
     else if (a === 'variant' && e) { const id = e.id; e.variant = e.variant ? 0 : 1; render(); await mutate(d => { const x = d.entries.find(y => y.id === id); if (x) x.variant = e.variant }) }
     else if (a === 'cover') openCover();
+    else if (a === 'themes') openThemes();
+    else if (a === 'pickt') pickTheme(b.dataset.k);
     else if (a === 'savecover') { const t = $('#c-title').value.trim() || DEFAULT_TITLE, s = $('#c-sub').value.trim(); busy('Desant'); await mutate(d => { d.meta = Object.assign(d.meta || {}, { title: t, sub: s }) }); closeCard(); render() }
     else if (a === 'share') openShare();
     else if (a === 'doshare') {
@@ -955,8 +1081,9 @@ document.addEventListener('click', async ev => {
     else if (a === 'refresh') { busy('Actualitzant'); data = await readData(); closeCard(); render() }
     else if (a === 'install') openInstall();
     else if (a === 'logout') logout();
-    else if (a === 'reset') openCard(`<h3>Buidar el diari?</h3><p>S'esborraran totes les entrades del llibre (no el Google Docs original ni les fotos preparades). Després podràs tornar a importar-ho tot.</p><div class="actions"><button class="btn" data-act="close">Cancel·la</button><button class="btn danger" data-act="doreset">Sí, buida-ho</button></div>`);
-    else if (a === 'doreset') { busy('Buidant'); await mutate(d => { d.entries = []; d.meta.imported = {}; d.meta.importProgress = {} }); closeCard(); render(); toast('Diari buit') }
+    else if (a === 'diaris') await openDiaries();
+    else if (a === 'opendiari') await switchDiari(b.dataset.id);
+    else if (a === 'newdiari') await newDiari($('#n-name').value.trim());
     else if (a === 'copyscript') {
       const id = b.dataset.doc; let code = '';
       try { code = await (await fetch('copiar-fotos.gs', { cache: 'no-store' })).text() } catch (e) {}
@@ -969,7 +1096,8 @@ document.addEventListener('click', async ev => {
     else if (a === 'printno') finishPrint(false);
     else if (a === 'addph') $('#f-photos').click();
     else if (a === 'rm') { const p = edit.photos.splice(+b.dataset.i, 1)[0]; if (!p.tmp) edit.removed.push(p.id); drawThumbs() }
-    else if (a === 'left') { const i = +b.dataset.i;[edit.photos[i - 1], edit.photos[i]] = [edit.photos[i], edit.photos[i - 1]]; drawThumbs() }
+    else if (a === 'left' || a === 'right') { const i = +b.dataset.i, j = a === 'left' ? i - 1 : i + 1; if (j < 0 || j >= edit.photos.length) return; [edit.photos[j], edit.photos[i]] = [edit.photos[i], edit.photos[j]]; drawThumbs() }
+    else if (a === 'size') { const p = edit.photos[+b.dataset.i], s = NEXT_SIZE[p.s || 'g']; if (s === 'g') delete p.s; else p.s = s; drawThumbs() }
     else if (a === 'save') saveEditor();
     else if (a === 'del') {
       if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'Segur? Torna a prémer'; return }
@@ -997,12 +1125,12 @@ window.addEventListener('beforeprint', () => book.querySelectorAll('img[data-pid
 
 /* ================= boot ================= */
 function setupScreen() {
-  showScreen(`<div class="hand">Falta un pas</div><h1>Diari de Pauete i Maruxi</h1>
+  showScreen(`<div class="hand">Falta un pas</div><h1>Diaris Nidia</h1>
     <p>L'app ja està penjada, però encara no està connectada amb Google. Cal posar l'«ID de client» de Google Cloud a l'arxiu <code>config.js</code> del repositori.</p>
     <p>Els passos estan explicats al <a href="https://github.com/rogerbeltranps-lab/diari-pauete-maruxi#readme">README del repositori</a>.</p>`);
 }
 function loginScreen(msg) {
-  showScreen(`<div class="hand">el nostre llibre</div><h1>Diari de Pauete i Maruxi</h1>
+  showScreen(`<div class="hand">els nostres llibres</div><h1>Diaris Nidia</h1>
     <p>Entra amb el teu compte de Google. Les fotos i els textos es guarden a la carpeta «${esc(FOLDER_NAME)}» del vostre Google Drive.</p>
     ${msg ? `<p class="muted">${esc(msg)}</p>` : ''}
     <button class="btn primary big" data-act="login">Entra amb Google</button>`);
@@ -1023,7 +1151,7 @@ async function boot() {
         <div class="row" style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn primary" id="b-create">Crea el diari</button><button class="btn" id="b-retry">Torna a mirar</button></div>`);
       $('#b-retry').onclick = () => location.reload();
       $('#b-create').onclick = async () => {
-        try { $('#b-create').disabled = true; folderId = await createFolder(FOLDER_NAME); ls.set('diari.folder', folderId); data = emptyData(); await writeData(data); render() }
+        try { $('#b-create').disabled = true; folderId = await createFolder(FOLDER_NAME, null, DIARI_PROP); ls.set('diari.folder', folderId); data = emptyData(); await writeData(data); render() }
         catch (err) { fail(err, 'crear el diari'); $('#b-create').disabled = false }
       };
       return;
