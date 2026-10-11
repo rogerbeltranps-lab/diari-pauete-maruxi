@@ -464,9 +464,8 @@ function render() {
   if (!data.entries.length) {
     listEl.innerHTML = '';
     book.innerHTML = `<div class="empty"><h2>El diari és buit</h2>
-      <p>Pots portar-hi el que ja teniu al Google Docs o començar amb una entrada nova.</p>
-      <p class="muted">L'app llegeix el document directament del vostre Google Drive, amb totes les pestanyes i les fotos. No cal baixar res.</p>
-      <div class="row"><button class="btn primary" data-act="docsimport">Importa del Google Docs</button><button class="btn" data-act="new">+ Nova entrada</button></div></div>`;
+      <p>Comença amb la primera entrada: escriu el que ha passat i afegeix-hi les fotos.</p>
+      <div class="row"><button class="btn primary" data-act="new">+ Nova entrada</button></div></div>`;
     return;
   }
   const ents = selectedEntries();
@@ -911,7 +910,6 @@ function layApply(k, v) {
 /* ================= menu, cover, share, print ================= */
 function openMenu() {
   openCard(`<h3>Més opcions</h3><div class="menu">
-    <button class="btn" data-act="docsimport">Importa del Google Docs</button>
     <button class="btn" data-act="diaris">Canvia de diari o crea'n un de nou</button>
     <button class="btn" data-act="themes">Colors del diari</button>
     <button class="btn" data-act="cover">Edita la portada</button>
