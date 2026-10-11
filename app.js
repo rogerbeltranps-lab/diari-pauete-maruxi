@@ -692,12 +692,15 @@ async function saveEditor() {
       else ph.push(p);
     }
     progress('Desant al Drive…');
+    const sid = ed.id || uid(), before = ed.id && data.entries.find(y => y.id === ed.id);
+    const snap = before && ed.removed.length ? JSON.parse(JSON.stringify(before)) : null;
     await mutate(d => {
       const x = ed.id && d.entries.find(y => y.id === ed.id);
       if (x) Object.assign(x, fields, { photos: ph });
-      else d.entries.push({ id: ed.id || uid(), variant: d.entries.length % 2, chapter: !!(chEl && chEl.checked), ...fields, photos: ph });
+      else d.entries.push({ id: sid, variant: d.entries.length % 2, chapter: !!(chEl && chEl.checked), ...fields, photos: ph });
     });
-    for (const id of ed.removed) await trashFile(id);
+    const bkDone = backupSoon([sid], snap ? [snap] : []);
+    if (ed.removed.length) { progress('Desant la còpia de seguretat…'); await bkDone; for (const id of ed.removed) await trashFile(id) }
     ls.del('diari.draft'); closeCard(); render(); toast('Desat');
   } catch (err) { fail(err, 'desar') }
 }
@@ -705,6 +708,7 @@ async function saveEditor() {
 /* ================= colour themes (shared by everyone through diari.json, so the printed book matches) ================= */
 const THEMES = [
   {"key": "bosc", "name": "Bosc", "desc": "Verd bosc i terracota", "sw": ["#ece5da", "#3e5a48", "#a5583c", "#fffefb"], "vars": {}},
+  {"key": "blau", "name": "Blau", "desc": "Blau cel i taronja", "sw": ["#e8edf4", "#2d5da8", "#e09a3b", "#fffefb"], "vars": {"--desk": "#e8edf4", "--panel": "#f6f8fb", "--ink": "#1d2735", "--muted": "#66728a", "--line": "#d3dbe7", "--accent": "#2d5da8", "--accent-soft": "#dbe4f3", "--clay": "#e09a3b", "--paper-ink": "#1d2735", "--paper-soft": "#77829a", "--paper-accent": "#2d5da8", "--paper-clay": "#d08a2c", "--paper-line": "#d5dce8", "--photo-bg": "#e6ebf3"}},
   {"key": "tinta", "name": "Tinta", "desc": "Blau marí i mostassa", "sw": ["#e9e8e4", "#28385a", "#c08a2d", "#fffefb"], "vars": {"--desk": "#e9e8e4", "--panel": "#f7f6f2", "--ink": "#1f2430", "--muted": "#6e717a", "--line": "#d6d4cd", "--accent": "#28385a", "--accent-soft": "#dfe3ec", "--clay": "#c08a2d", "--paper-ink": "#1f2430", "--paper-soft": "#7d7f86", "--paper-accent": "#28385a", "--paper-clay": "#b07c22", "--paper-line": "#d8d6cf"}},
   {"key": "mar", "name": "Mar", "desc": "Verd aigua i corall", "sw": ["#e6ecea", "#2f6f6a", "#d06a4e", "#fffefb"], "vars": {"--desk": "#e6ecea", "--panel": "#f5f8f7", "--ink": "#1f2b2a", "--muted": "#677572", "--line": "#d0dad7", "--accent": "#2f6f6a", "--accent-soft": "#dbe9e6", "--clay": "#d06a4e", "--paper-ink": "#1f2b2a", "--paper-soft": "#76827f", "--paper-accent": "#2f6f6a", "--paper-clay": "#c4603f", "--paper-line": "#d2dbd8", "--photo-bg": "#e8eeec"}},
   {"key": "vi", "name": "Vi", "desc": "Granat i daurat", "sw": ["#efe7e6", "#6e2f45", "#b9864a", "#fffefb"], "vars": {"--desk": "#efe7e6", "--panel": "#faf6f5", "--ink": "#2e2124", "--muted": "#806c70", "--line": "#e0d2d1", "--accent": "#6e2f45", "--accent-soft": "#f0e0e4", "--clay": "#b9864a", "--paper-ink": "#2e2124", "--paper-soft": "#8a777b", "--paper-accent": "#6e2f45", "--paper-clay": "#a97a3f", "--paper-line": "#e2d5d4", "--photo-bg": "#f1e9e8"}},
@@ -734,6 +738,112 @@ async function pickTheme(key) {
   await mutate(d => { d.meta.theme = key });
 }
 
+/* ================= backup: a readable copy in the diary's folder =================
+   «Còpia de seguretat» holds copia.json (what has been copied), a Google Doc with all the texts
+   and one folder of photo copies per entry. Copies are never deleted, even when an entry or a photo is. */
+const BK_NAME = 'Còpia de seguretat';
+let bk = null, bkQueue = Promise.resolve();
+async function bkLoad() {
+  if (bk && bk.diari === folderId) return bk;
+  const f = await list(`'${folderId}' in parents and name='${qName(BK_NAME)}' and mimeType='${FOLDER_MIME}' and trashed=false`);
+  const folder = f[0] ? f[0].id : await createFolder(BK_NAME, folderId);
+  const j = await list(`'${folder}' in parents and name='copia.json' and trashed=false`);
+  const state = { doc: null, entries: {} };
+  if (j[0]) { try { Object.assign(state, await getJSON(`${DRIVE}/files/${j[0].id}?alt=media&supportsAllDrives=true`)) } catch (e) { if (e instanceof Redirecting) throw e; console.warn('copia.json', e) } }
+  bk = { diari: folderId, folder, fileId: j[0] ? j[0].id : null, state };
+  return bk;
+}
+async function bkSave() {
+  const blob = new Blob([JSON.stringify(bk.state)], { type: 'application/json' });
+  if (bk.fileId) await uploadFile({}, blob, bk.fileId);
+  else bk.fileId = await uploadFile({ name: 'copia.json', mimeType: 'application/json', parents: [bk.folder] }, blob);
+}
+const safeName = t => String(t || '').replace(/[\\/:*?"<>|#%]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+const bkLabel = e => safeName([e.date, e.title].filter(Boolean).join(' · ')) || 'Entrada';
+const bkChanged = e => { const r = bk.state.entries[e.id]; return !r || r.date !== (e.date || '') || r.title !== (e.title || '') || JSON.stringify(r.paras) !== JSON.stringify(e.paras || []) || (e.photos || []).some(p => !r.photos.includes(p.id)) };
+async function bkEntry(e) {
+  const r = bk.state.entries[e.id] || (bk.state.entries[e.id] = { photos: [] });
+  Object.assign(r, { date: e.date || '', title: e.title || '', chapter: !!e.chapter, paras: (e.paras || []).slice() });
+  for (const p of (e.photos || []).filter(p => !r.photos.includes(p.id))) {
+    if (!r.folder) r.folder = await createFolder(bkLabel(e), bk.folder);
+    try {
+      await api(`${DRIVE}/files/${p.id}/copy?fields=id&supportsAllDrives=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${bkLabel(e)} - ${r.photos.length + 1}.jpg`, parents: [r.folder] }) });
+    } catch (err) { if (err instanceof Redirecting) throw err; if (err.status !== 404) throw err; console.warn('photo gone, not copied', p.id) }
+    r.photos.push(p.id);
+  }
+}
+function bkHTML() {
+  const st = bk.state, cur = new Set(data.entries.map(e => e.id));
+  const one = id => {
+    const r = st.entries[id]; if (!r) return '';
+    const paras = r.paras.map(t => `<p>${esc(t).replace(/\n/g, '<br>')}</p>`).join('');
+    if (r.chapter) return `<h1>${esc(r.title || 'Capítol')}</h1>${paras}`;
+    return `<h2>${esc([r.date, r.title].filter(Boolean).join(' · ') || 'Entrada')}</h2>${paras}`
+      + (r.folder ? `<p><a href="https://drive.google.com/drive/folders/${encodeURIComponent(r.folder)}">Fotos d'aquest dia (${r.photos.length})</a></p>` : '');
+  };
+  const gone = Object.keys(st.entries).filter(id => !cur.has(id));
+  return `<html><head><meta charset="utf-8"></head><body><h1>${esc(data.meta.title || DEFAULT_TITLE)}</h1>
+    <p><i>Còpia de seguretat feta per Diaris Nidia. Actualitzada el ${esc(new Date().toLocaleString('ca'))}.</i></p>
+    ${data.entries.map(e => one(e.id)).join('')}${gone.length ? `<h1>Entrades esborrades o unides</h1>${gone.map(one).join('')}` : ''}</body></html>`;
+}
+async function bkWriteDoc() {
+  const name = 'Còpia de seguretat — ' + (data.meta.title || DEFAULT_TITLE), blob = () => new Blob([bkHTML()], { type: 'text/html' });
+  if (bk.state.doc) {
+    try { await uploadFile({ name }, blob(), bk.state.doc); return }
+    catch (e) { if (e instanceof Redirecting) throw e; console.warn('doc update failed, making a new one', e) }
+  }
+  const old = bk.state.doc;
+  bk.state.doc = await uploadFile({ name, mimeType: 'application/vnd.google-apps.document', parents: [bk.folder] }, blob());
+  if (old) await trashFile(old);
+}
+/* queue a backup after a change; extra = entry objects no longer in data (deleted ones) */
+function backupSoon(ids = [], extra = []) {
+  if (!folderId) return bkQueue;
+  const fid = folderId;
+  bkQueue = bkQueue.then(async () => {
+    if (fid !== folderId) return;
+    await bkLoad();
+    for (const e of extra) await bkEntry(e);
+    for (const id of ids) { const e = data.entries.find(x => x.id === id); if (e) await bkEntry(e) }
+    await bkWriteDoc(); await bkSave();
+  }).catch(err => { if (err instanceof Redirecting) return; console.warn('backup', err); toast("No s'ha pogut fer la còpia de seguretat. Ho pots fer a Més opcions → Còpia de seguretat.", 6000) });
+  return bkQueue;
+}
+const driveLink = (id, doc) => id ? `https://${doc ? 'docs.google.com/document/d/' + encodeURIComponent(id) : 'drive.google.com/drive/folders/' + encodeURIComponent(id)}` : '';
+async function openBackup() {
+  busy('Còpia de seguretat', 'Mirant què hi ha copiat…');
+  await bkQueue; await bkLoad();
+  const pend = data.entries.filter(bkChanged).length;
+  openCard(`<h3>Còpia de seguretat</h3>
+    <p>Cada vegada que deseu una entrada, l'app en guarda una còpia a la carpeta «${esc(BK_NAME)}» del diari: el text va a un Google Docs i les fotos es copien en una carpeta per dia. Si després esborreu una entrada o una foto, la còpia es queda.</p>
+    <p>${pend ? `Hi ha <b>${pend}</b> ${pend === 1 ? 'entrada que encara no té' : 'entrades que encara no tenen'} còpia (per exemple, les importades del Google Docs).` : 'Totes les entrades tenen còpia.'}</p>
+    <div class="menu">${bk.state.doc ? `<a class="btn" href="${driveLink(bk.state.doc, true)}" target="_blank" rel="noopener">Obre el Google Docs de la còpia</a>` : ''}<a class="btn" href="${driveLink(bk.folder)}" target="_blank" rel="noopener">Obre la carpeta de la còpia</a></div>
+    <div class="actions"><button class="btn" data-act="close">Tanca</button>${pend ? `<button class="btn primary" data-act="backupall">Fes la còpia de ${pend === 1 ? "l'entrada" : 'les ' + pend + ' entrades'}</button>` : ''}</div>`);
+}
+async function backupAll() {
+  ensureToken(1500);
+  busy('Còpia de seguretat', 'Preparant…');
+  await bkQueue; await bkLoad();
+  const todo = data.entries.filter(bkChanged);
+  importing = true; keepAwake(true);
+  try {
+    for (const [i, e] of todo.entries()) {
+      if (!token(300)) {
+        await bkWriteDoc(); await bkSave();
+        openCard(`<h3>Cal tornar a entrar</h3><p>Google demana tornar a entrar cada hora. El que s'ha copiat fins ara està desat. Prem Continua i després torna a <b>Més opcions → Còpia de seguretat</b>: continuarà on s'ha quedat.</p>
+          <div class="actions"><button class="btn primary" data-act="login">Continua</button></div>`, true);
+        return;
+      }
+      progress(`Copiant: ${i + 1} de ${todo.length}`, (i + 1) / todo.length);
+      await bkEntry(e);
+      if (i % 15 === 14) await bkSave();
+    }
+    progress('Escrivint el Google Docs…');
+    await bkWriteDoc(); await bkSave();
+  } finally { importing = false; keepAwake(false) }
+  closeCard(); toast('Còpia de seguretat feta', 4000);
+}
+
 /* ================= several diaries ================= */
 async function openDiaries() {
   busy('Diaris', 'Buscant els diaris…');
@@ -746,7 +856,7 @@ async function openDiaries() {
     <div class="actions"><button class="btn primary" data-act="close">Tanca</button></div>`);
 }
 async function loadDiari(id) {
-  folderId = id; dataFileId = null; photosFolderId = null; ls.set('diari.folder', id);
+  folderId = id; dataFileId = null; photosFolderId = null; bk = null; ls.set('diari.folder', id);
   group = 'all'; ls.set('diari.group', group); $('#f-search').value = ''; activeId = null;
   data = await readData();
 }
@@ -773,6 +883,7 @@ function openMenu() {
   openCard(`<h3>Més opcions</h3><div class="menu">
     <button class="btn" data-act="docsimport">Importa del Google Docs</button>
     <button class="btn" data-act="diaris">Canvia de diari o crea'n un de nou</button>
+    <button class="btn" data-act="backup">Còpia de seguretat</button>
     <button class="btn" data-act="themes">Colors del diari</button>
     <button class="btn" data-act="cover">Edita la portada</button>
     <button class="btn" data-act="share">Comparteix el diari amb algú</button>
@@ -911,6 +1022,8 @@ document.addEventListener('click', async ev => {
     else if (a === 'variant' && e) { const id = e.id; e.variant = e.variant ? 0 : 1; render(); await mutate(d => { const x = d.entries.find(y => y.id === id); if (x) x.variant = e.variant }) }
     else if (a === 'cover') openCover();
     else if (a === 'themes') openThemes();
+    else if (a === 'backup') await openBackup();
+    else if (a === 'backupall') await backupAll();
     else if (a === 'theme') pickTheme(b.dataset.k);
     else if (a === 'savecover') { const t = $('#c-title').value.trim() || DEFAULT_TITLE, s = $('#c-sub').value.trim(); busy('Desant'); await mutate(d => { d.meta = Object.assign(d.meta || {}, { title: t, sub: s }) }); closeCard(); render() }
     else if (a === 'share') openShare();
@@ -945,14 +1058,14 @@ document.addEventListener('click', async ev => {
       if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'Segur? Torna a prémer'; return }
       const ed = edit; const old = data.entries.find(x => x.id === ed.id);
       busy('Esborrant'); await mutate(d => { d.entries = d.entries.filter(x => x.id !== ed.id) });
-      if (old) for (const p of old.photos || []) await trashFile(p.id);
+      if (old) { progress('Desant la còpia de seguretat…'); await backupSoon([], [old]); for (const p of old.photos || []) await trashFile(p.id) }
       ls.del('diari.draft'); closeCard(); render(); toast('Entrada esborrada');
     }
     else if (a === 'merge') {
-      const id = edit.id; busy('Unint');
+      const id = edit.id, ix = data.entries.findIndex(x => x.id === id), prevId = ix > 0 ? data.entries[ix - 1].id : null; busy('Unint');
       await mutate(d => { const i = d.entries.findIndex(x => x.id === id); if (i < 1) return; const cur = d.entries[i], prev = d.entries[i - 1];
         prev.paras.push(...(cur.title ? [cur.title] : []), ...(cur.date && cur.date !== prev.date ? [cur.date] : []), ...cur.paras); prev.photos = (prev.photos || []).concat(cur.photos || []); d.entries.splice(i, 1) });
-      closeCard(); render(); toast('Entrades unides');
+      closeCard(); render(); toast('Entrades unides'); if (prevId) backupSoon([prevId]);
     }
   } catch (err) { fail(err, 'fer-ho') }
 });

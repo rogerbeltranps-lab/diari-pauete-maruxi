@@ -160,6 +160,7 @@ main{min-width:0}
 .app-name{font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;color:var(--muted);line-height:1}
 
 #brand{cursor:pointer}
+a.btn{color:var(--ink)}
 .btn.diari{justify-content:space-between;gap:12px}
 .btn.diari small{color:var(--muted);font-style:italic;font-weight:400}
 .btn.diari.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
