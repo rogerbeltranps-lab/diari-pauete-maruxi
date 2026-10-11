@@ -190,7 +190,9 @@ const reNum = /\b\d{1,2}\s*[\/.\-]\s*\d{1,2}(\s*[\/.\-]\s*\d{2,4})?\b/;
 const reMon = new RegExp('\\b\\d{1,2}\\s*(de\\s+|d[\'’]\\s*|del\\s+)?(' + MONTHS + ')\\b', 'i');
 const reDay = new RegExp('^\\W*(' + DAYS + ')\\b', 'i');
 const reYear = /\b(19|20)\d{2}\b/;
-const isDateLine = t => t.length <= 70 && (reNum.test(t) || reMon.test(t) || reDay.test(t));
+const reNum2 = /(^|\D)\d{1,4}\s*\/\s*\d{1,2}\s*\/\s*\d{2,4}(\D|$)|^\W*\d{1,2}\s*\/\s*\d{4}\W*$/;
+const reLead = new RegExp('^\\W*(\\d|' + DAYS + '|finde|semana|setmana|cap de setmana)', 'i');
+const isDateLine = t => t.length <= 70 && (reNum.test(t) || reNum2.test(t) || reMon.test(t) || reDay.test(t)) && (reLead.test(t) || t.split(/\s+/).length <= 4);
 const isChapter = t => t.length <= 60 && reYear.test(t) && !isDateLine(t);
 /* blocks: [{t (text, may contain \n), heading, bold, imgs:[]}] → entries. tabTitle starts a chapter. */
 function blocksToEntries(blocks, tabTitle) {
@@ -203,10 +205,12 @@ function blocksToEntries(blocks, tabTitle) {
     const t = (b.t || '').trim();
     if (t) {
       const one = t.replace(/\n/g, ' ');
-      if (isChapter(one) && (b.heading || !cur || one === one.toUpperCase() || b.bold)) {
+      const early = !cur || (cur.chapter && out.length === 1);
+      if (isChapter(one) && (!tabTitle || early) && (b.heading || !cur || one === one.toUpperCase() || b.bold)) {
         if (cur && cur.chapter && !cur.paras.length && !cur.imgs.length) cur.title = clean(one); else start(one, true);
       }
       else if (hasDates ? isDateLine(one) : b.heading) start(one);
+      else if (isChapter(one) && (one === one.toUpperCase() || b.bold || b.heading)) { start(''); cur.title = one === one.toUpperCase() ? one.charAt(0) + one.slice(1).toLowerCase() : one }
       else if (b.heading && cur && !cur.title && !cur.paras.length) cur.title = one;
       else { if (!cur) start(''); cur.paras.push(t) }
     }
@@ -348,13 +352,17 @@ function entryPages(e) {
     pages.push({ kind: 'chapter', e, paras: e.paras, photos: ph.slice(0, k), first: true });
     groups(ph.slice(k), 4).forEach(g => pages.push({ kind: 'gallery', e, photos: g })); return pages;
   }
+  const lay = e.lay || {}, gmax = lay.per || (lay.size === 'l' ? 2 : 4);
   if (c > 1500 || (!ph.length && c > 2900)) {
     chunkParas(e.paras, 2700, 3300).forEach((ch, i) => pages.push({ kind: i ? 'text' : 'entry', e, paras: ch, photos: [], first: !i }));
-    groups(ph, 4).forEach(g => pages.push({ kind: 'gallery', e, photos: g }));
+    groups(ph, gmax).forEach(g => pages.push({ kind: 'gallery', e, photos: g }));
   } else {
-    const k = !ph.length ? 0 : c < 350 ? 4 : c < 800 ? 3 : 2;
+    let k = !ph.length ? 0 : c < 350 ? 4 : c < 800 ? 3 : 2;
+    if (lay.size === 'l') k = Math.min(k, c < 350 ? 2 : 1);
+    if (lay.first != null) k = lay.first;
+    k = Math.min(k, ph.length);
     pages.push({ kind: 'entry', e, paras: e.paras, photos: ph.slice(0, k), first: true });
-    groups(ph.slice(k), 4).forEach(g => pages.push({ kind: 'gallery', e, photos: g }));
+    groups(ph.slice(k), gmax).forEach(g => pages.push({ kind: 'gallery', e, photos: g }));
   }
   return pages;
 }
@@ -381,18 +389,19 @@ function pageHTML(p, num, ents) {
       <div class="ct"><h1>${esc(data.meta.title || DEFAULT_TITLE)}</h1>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>
       ${range ? `<div class="range">${esc(range)}</div>` : ''}</div>`;
   }
-  const e = p.e, v = e.variant || 0, side = num % 2 ? 'verso' : 'recto';
+  const e = p.e, v = e.variant || 0, side = num % 2 ? 'verso' : 'recto', lay = e.lay || {};
+  const lc = ` sz-${lay.size || 'm'}${lay.fit === 'contain' ? ' fit-contain' : ''}`;
   const pn = `<div class="pn">${num}</div>`, run = !e.chapter && chOf.get(e.id) ? `<div class="run">${esc(chOf.get(e.id))}</div>` : '';
   const txt = l => `<div class="txt">${l.map(t => `<p>${esc(t)}</p>`).join('')}</div>`;
   if (p.kind === 'chapter') {
     const y = (e.title.match(reYear) || [''])[0];
-    return `<div class="page p-chapter"><div class="chh">${y ? `<div class="yr">${y}</div>` : ''}${e.title && e.title !== y ? `<div class="cht">${esc(e.title)}</div>` : ''}</div>${p.paras.length ? txt(p.paras) : ''}${p.photos.length ? gridHTML(p.photos, v) : ''}${pn}</div>`;
+    return `<div class="page p-chapter${lc}"><div class="chh">${y ? `<div class="yr">${y}</div>` : ''}${e.title && e.title !== y ? `<div class="cht">${esc(e.title)}</div>` : ''}</div>${p.paras.length ? txt(p.paras) : ''}${p.photos.length ? gridHTML(p.photos, v) : ''}${pn}</div>`;
   }
-  if (p.kind === 'entry') return `<div class="page p-entry ${side} ${p.photos.length ? '' : 'p-text'} v${v}">${run}
+  if (p.kind === 'entry') return `<div class="page p-entry ${side} ${p.photos.length ? '' : 'p-text'} v${v}${lc}">${run}
       <div class="eh">${e.date ? `<div class="date">${esc(e.date)}</div>` : ''}${e.title ? `<h2>${esc(e.title)}</h2>` : ''}</div>
       ${p.paras.length ? txt(p.paras) : ''}${p.photos.length ? gridHTML(p.photos, v) : ''}${pn}</div>`;
   if (p.kind === 'text') return `<div class="page p-text ${side}">${run}<div class="rh">${esc(e.date || e.title)} · continua</div>${txt(p.paras)}${pn}</div>`;
-  return `<div class="page p-gallery ${side}">${run}<div class="rh">${esc(e.date || e.title)}</div>${gridHTML(p.photos, (v + num) % 2)}${pn}</div>`;
+  return `<div class="page p-gallery ${side}${lc}">${run}<div class="rh">${esc(e.date || e.title)}</div>${gridHTML(p.photos, (v + num) % 2)}${pn}</div>`;
 }
 
 /* ================= render ================= */
@@ -467,7 +476,7 @@ function render() {
   { let ch = ''; for (const e of data.entries) { if (e.chapter) ch = e.title || ''; chOf.set(e.id, ch) } }
   book.innerHTML = pages.map((p, i) => {
     const tools = p.kind === 'cover' ? `<button data-act="cover">Edita portada</button>` :
-      p.first ? `<button data-act="variant" data-id="${p.e.id}">Canvia disseny</button><button data-act="edit" data-id="${p.e.id}">Edita</button>` : '';
+      p.first ? `<button data-act="layout" data-id="${p.e.id}">Fotos</button><button data-act="edit" data-id="${p.e.id}">Edita</button>` : '';
     return `<div class="sheet ${p.kind === 'cover' ? 'cover' : ''}"${p.first ? ` data-eid="${p.e.id}"` : ''}><div class="tools">${tools}</div>${pageHTML(p, i, ents)}</div>`;
   }).join('');
   scale(); fitText(); renderList();
@@ -526,7 +535,7 @@ async function keepAwake(on) {
 }
 window.addEventListener('beforeunload', e => { if (importing) { e.preventDefault(); e.returnValue = '' } });
 document.addEventListener('visibilitychange', () => { if (importing && document.visibilityState === 'visible') keepAwake(true) });
-async function runImport(groupsList, resolveImg) {
+async function runImport(groupsList, resolveImg, resumeInfo) {
   const prog0 = (data.meta && data.meta.importProgress) || {};
   const skip = g => (g.key && prog0[g.key]) || 0;
   const total = groupsList.reduce((a, g) => a + g.entries.slice(skip(g)).reduce((b, e) => b + e.imgs.length, 0), 0);
@@ -547,26 +556,35 @@ async function runImport(groupsList, resolveImg) {
           }
         });
       };
-      for (let i = from; i < g.entries.length; i++) {
+      for (let i = from; i < g.entries.length; i += 4) {
         if (!token(600)) {
-          if (out.length) await flush(false, i);
           importing = false; keepAwake(false);
+          if (resumeInfo) { ls.set('diari.resume', JSON.stringify(resumeInfo)); openCard(`<h3>Tornant a entrar…</h3><p>Google demana tornar a entrar cada hora. El que s'ha importat està desat i continuarà sol.</p>`, true); login() }
           openCard(`<h3>Cal tornar a entrar</h3><p>Google demana tornar a entrar cada hora. El que s'ha importat fins ara està desat. Prem Continua i després torna a <b>Importa del Google Docs</b>: continuarà on s'ha quedat.</p>
             <div class="actions"><button class="btn primary" data-act="login">Continua</button></div>`, true);
           render(); return;
         }
-        const pe = g.entries[i], ph = [];
-        for (const im of pe.imgs) {
-          progress(`${g.label}: dia ${i + 1} de ${g.entries.length} · fotos ${++done} de ${total}`, done / Math.max(total, 1));
-          try {
-            const r = await resolveImg(im);
-            if (r) { ph.push(await uploadPhoto(r, pe.date || pe.title)); nPh++ } else failed++;
-          } catch (e) { if (e instanceof Redirecting) throw e; console.warn('photo skipped', e); failed++ }
-        }
-        out.push({ id: uid(), src: g.key || undefined, chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: ph, variant: i % 2 });
-        pe.chapter ? nCh++ : nEn++;
-        const last = i === g.entries.length - 1;
-        if (last || out.length >= 4) { progress(`${g.label}: desant…`); await flush(last, i + 1) }
+        const block = g.entries.slice(i, i + 4);
+        const slots = block.map(pe => new Array(pe.imgs.length).fill(null));
+        const tasks = []; block.forEach((pe, bi) => pe.imgs.forEach((im, k) => tasks.push([bi, k, im, pe])));
+        let next = 0;
+        const worker = async () => {
+          while (next < tasks.length) {
+            const [bi, k, im, pe] = tasks[next++];
+            try {
+              const r = await resolveImg(im);
+              if (r) { slots[bi][k] = await uploadPhoto(r, pe.date || pe.title); nPh++ } else failed++;
+            } catch (e) { if (e instanceof Redirecting) throw e; console.warn('photo skipped', e); failed++ }
+            progress(`${g.label}: dia ${Math.min(i + 4, g.entries.length)} de ${g.entries.length} · fotos ${++done} de ${total}`, done / Math.max(total, 1));
+          }
+        };
+        await Promise.all(Array.from({ length: 6 }, worker));
+        block.forEach((pe, bi) => {
+          out.push({ id: uid(), src: g.key || undefined, chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: slots[bi].filter(Boolean), variant: (i + bi) % 2 });
+          pe.chapter ? nCh++ : nEn++;
+        });
+        const upto = i + block.length, last = upto >= g.entries.length;
+        progress(`${g.label}: desant…`); await flush(last, upto);
       }
       if (g.entries.length === from) await flush(true, from);
     }
@@ -619,8 +637,8 @@ async function pickDoc(id) {
     } else fail(err, 'llegir el document');
   }
 }
-async function doDocImport(id) {
-  const tabIds = [...card.querySelectorAll('#tabs input:checked')].map(i => i.dataset.tab);
+async function doDocImport(id, tabsOverride) {
+  const tabIds = tabsOverride || [...card.querySelectorAll('#tabs input:checked')].map(i => i.dataset.tab);
   if (!tabIds.length) { toast('Tria almenys una pestanya.'); return }
   try {
     ensureToken(1500);
@@ -630,8 +648,89 @@ async function doDocImport(id) {
     const groupsList = doc.tabs.filter(t => tabIds.includes(t.id)).map(t => ({ key: id + ':' + t.id, label: t.title || 'Pestanya', entries: blocksToEntries(tabBlocks(t), t.title) }));
     const again = groupsList.filter(g => data.meta.imported && data.meta.imported[g.key]).map(g => g.key);
     if (again.length) await mutate(d => { d.entries = d.entries.filter(e => !again.includes(e.src)); again.forEach(k => { delete d.meta.imported[k]; if (d.meta.importProgress) delete d.meta.importProgress[k] }) });
-    await runImport(groupsList, async img => (await originalImage(orig, img)) || docImage(id, img));
+    await runImport(groupsList, async img => (await originalImage(orig, img)) || docImage(id, img), { doc: id, tabs: tabIds });
   } catch (err) { fail(err, 'importar el diari') }
+}
+
+/* ================= backup: every entry written in the app → folder «Còpia de seguretat» + one Google Doc ================= */
+const BK_FOLDER = 'Còpia de seguretat', BK_DOC = 'Diari - còpia de seguretat', GDOC = 'application/vnd.google-apps.document';
+let bk = null, backingUp = false;
+async function ensureBackupPlace() {
+  if (bk) return bk;
+  const f = await list(`'${folderId}' in parents and name='${qName(BK_FOLDER)}' and mimeType='${FOLDER_MIME}' and trashed=false`);
+  const fold = f[0] ? f[0].id : await createFolder(BK_FOLDER, folderId);
+  const dd = await list(`'${fold}' in parents and name='${qName(BK_DOC)}' and mimeType='${GDOC}' and trashed=false`);
+  let doc = dd[0] && dd[0].id;
+  if (!doc) doc = (await getJSON(`${DRIVE}/files?fields=id&supportsAllDrives=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: BK_DOC, mimeType: GDOC, parents: [fold] }) })).id;
+  bk = { folder: fold, doc }; return bk;
+}
+const docsBatch = (doc, requests) => getJSON(`${DOCS}${doc}:batchUpdate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requests }) });
+/* Google Docs only inserts images from a public address, so each photo is shared by link for a few seconds and unshared right after. */
+async function docInsertPhoto(doc, p) {
+  let perm = null;
+  try {
+    perm = await getJSON(`${DRIVE}/files/${p.id}/permissions?fields=id&supportsAllDrives=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'reader', type: 'anyone' }) });
+    const width = { magnitude: (p.w || 4) >= (p.h || 3) ? 430 : 300, unit: 'PT' };
+    for (const uri of [`https://lh3.googleusercontent.com/d/${p.id}`, `https://drive.google.com/uc?export=download&id=${p.id}`]) {
+      try { await docsBatch(doc, [{ insertInlineImage: { endOfSegmentLocation: {}, uri, objectSize: { width } } }, { insertText: { endOfSegmentLocation: {}, text: '\n' } }]); return true }
+      catch (e) { if (e instanceof Redirecting) throw e }
+    }
+  } catch (e) { if (e instanceof Redirecting) throw e }
+  finally { if (perm && perm.id) { try { await api(`${DRIVE}/files/${p.id}/permissions/${perm.id}?supportsAllDrives=true`, { method: 'DELETE' }) } catch (e) {} } }
+  await docsBatch(doc, [{ insertText: { endOfSegmentLocation: {}, text: `[Foto: https://drive.google.com/file/d/${p.id}/view]\n` } }]);
+  return false;
+}
+async function backupEntry(e, edited) {
+  const { folder, doc } = await ensureBackupPlace();
+  const label = ([e.date, e.title].filter(Boolean).join(' · ') || 'Entrada') + (edited ? ' (editat)' : '');
+  const day = new Date().toISOString().slice(0, 10);
+  const sub = await createFolder(`${label} · ${day}`.replace(/[\/\\]/g, '-').slice(0, 100), folder);
+  await uploadFile({ name: 'text.txt', mimeType: 'text/plain', parents: [sub] }, new Blob([`${label}\n\n${e.paras.join('\n\n')}\n`], { type: 'text/plain' }));
+  let i = 0;
+  for (const p of e.photos || []) await getJSON(`${DRIVE}/files/${p.id}/copy?fields=id&supportsAllDrives=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `foto-${String(++i).padStart(2, '0')}.jpg`, parents: [sub] }) });
+  const d = await getJSON(`${DOCS}${doc}?fields=body(content(endIndex))`);
+  const end = d.body.content[d.body.content.length - 1].endIndex - 1;
+  const body = e.paras.length ? e.paras.join('\n') + '\n' : '';
+  await docsBatch(doc, [
+    { insertText: { location: { index: end }, text: '\n' + label + '\n' + body } },
+    { updateParagraphStyle: { range: { startIndex: end + 1, endIndex: end + 1 + label.length }, paragraphStyle: { namedStyleType: 'HEADING_2' }, fields: 'namedStyleType' } },
+    ...(body ? [{ updateParagraphStyle: { range: { startIndex: end + 2 + label.length, endIndex: end + 2 + label.length + body.length }, paragraphStyle: { namedStyleType: 'NORMAL_TEXT' }, fields: 'namedStyleType' } }] : [])
+  ]);
+  let links = 0;
+  for (const p of e.photos || []) if (!await docInsertPhoto(doc, p)) links++;
+  return links;
+}
+async function backupPending(manual) {
+  if (backingUp || !folderId) return;
+  backingUp = true;
+  try {
+    const todo = data.entries.filter(e => e.mt && (!e.bk || e.bk < e.mt));
+    if (!todo.length) { if (manual) toast('La còpia de seguretat està al dia.'); return }
+    if (manual) busy('Còpia de seguretat', `${todo.length} entrades`);
+    let links = 0, n = 0;
+    for (const e of todo) {
+      if (manual) progress(`Copiant ${++n} de ${todo.length}`, n / todo.length);
+      links += await backupEntry(e, !!e.bk);
+      const id = e.id, t = Date.now(); await mutate(d => { const x = d.entries.find(y => y.id === id); if (x) x.bk = t });
+    }
+    if (manual) closeCard();
+    toast(`Còpia de seguretat feta (${todo.length} entrad${todo.length === 1 ? 'a' : 'es'})${links ? `; ${links} fotos han quedat com a enllaç` : ''}.`, 4500);
+  } catch (err) {
+    if (err instanceof Redirecting) return;
+    console.warn('backup', err);
+    if (manual) fail(err, 'fer la còpia de seguretat'); else toast("No s'ha pogut fer la còpia de seguretat. Es tornarà a provar més tard.", 4500);
+  } finally { backingUp = false }
+}
+async function openBackupInfo() {
+  try {
+    busy('Còpia de seguretat'); const b = await ensureBackupPlace();
+    const pend = data.entries.filter(e => e.mt && (!e.bk || e.bk < e.mt)).length;
+    openCard(`<h3>Còpia de seguretat</h3>
+      <p>Cada entrada que escriviu o modifiqueu a l'app es copia automàticament a la carpeta <b>${esc(BK_FOLDER)}</b> del diari: una carpeta per entrada amb el text i les fotos, i tot seguit al Google Docs <b>${esc(BK_DOC)}</b>.</p>
+      <div class="menu"><a class="btn" href="https://docs.google.com/document/d/${esc(b.doc)}/edit" target="_blank" rel="noopener">Obre el Google Docs</a><a class="btn" href="https://drive.google.com/drive/folders/${esc(b.folder)}" target="_blank" rel="noopener">Obre la carpeta</a></div>
+      <p class="muted">${pend ? `Hi ha ${pend} entrades pendents de copiar.` : 'Està al dia.'} El que es va importar del Google Docs original no es torna a copiar: l'original ja és la còpia.</p>
+      <div class="actions"><button class="btn" data-act="close">Tanca</button>${pend ? '<button class="btn primary" data-act="backupall">Copia ara</button>' : ''}</div>`);
+  } catch (err) { fail(err, 'obrir la còpia de seguretat') }
 }
 
 /* ================= editor ================= */
@@ -679,7 +778,7 @@ function openEditor(e, draft) {
 async function saveEditor() {
   const paras = $('#f-text').value.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
   const dateEl = $('#f-date'), chEl = $('#f-chapter');
-  const fields = { date: dateEl ? dateEl.value.trim() : '', title: $('#f-title').value.trim(), paras };
+  const fields = { date: dateEl ? dateEl.value.trim() : '', title: $('#f-title').value.trim(), paras, mt: Date.now() };
   if (!fields.date && !fields.title && !paras.length && !edit.photos.length) { toast("L'entrada està buida."); return }
   const ed = edit; saveDraft();
   try {
@@ -692,16 +791,15 @@ async function saveEditor() {
       else ph.push(p);
     }
     progress('Desant al Drive…');
-    const sid = ed.id || uid(), before = ed.id && data.entries.find(y => y.id === ed.id);
-    const snap = before && ed.removed.length ? JSON.parse(JSON.stringify(before)) : null;
+    const sid = ed.id || uid();
     await mutate(d => {
       const x = ed.id && d.entries.find(y => y.id === ed.id);
       if (x) Object.assign(x, fields, { photos: ph });
       else d.entries.push({ id: sid, variant: d.entries.length % 2, chapter: !!(chEl && chEl.checked), ...fields, photos: ph });
     });
-    const bkDone = backupSoon([sid], snap ? [snap] : []);
-    if (ed.removed.length) { progress('Desant la còpia de seguretat…'); await bkDone; for (const id of ed.removed) await trashFile(id) }
+    for (const id of ed.removed) await trashFile(id);
     ls.del('diari.draft'); closeCard(); render(); toast('Desat');
+    backupPending(false);
   } catch (err) { fail(err, 'desar') }
 }
 
@@ -715,7 +813,9 @@ const THEMES = [
   {"key": "crema", "name": "Crema", "desc": "Crema i terracota, com la teva imatge", "sw": ["#f7efe4", "#c9694b", "#7a2e20", "#fffaf3"], "vars": {"--desk": "#f7efe4", "--panel": "#fffaf4", "--ink": "#3b2a22", "--muted": "#8b7565", "--line": "#ecdccb", "--accent": "#c9694b", "--accent-soft": "#f9e4d7", "--clay": "#7a2e20", "--paper": "#fffcf7", "--paper-ink": "#3b2a22", "--paper-soft": "#9a8373", "--paper-accent": "#b35a3d", "--paper-clay": "#7a2e20", "--paper-line": "#e6d3c1", "--photo-bg": "#f2e7da"}},
   {"key": "llapis", "name": "Llapis", "desc": "Blanc i negre: estalvia tinta de color", "sw": ["#ebebea", "#333333", "#8c8c86", "#ffffff"], "vars": {"--desk": "#ebebea", "--panel": "#f8f8f7", "--ink": "#222222", "--muted": "#6f6f6c", "--line": "#d8d8d4", "--accent": "#333333", "--accent-soft": "#e6e6e3", "--clay": "#8c8c86", "--paper": "#ffffff", "--paper-ink": "#222222", "--paper-soft": "#7d7d79", "--paper-accent": "#2b2b2b", "--paper-clay": "#7a7a74", "--paper-line": "#d9d9d5", "--photo-bg": "#eeeeee"}}
 ];
+const OLD_THEMES = { classic: 'blau', cel: 'blau', mari: 'tinta' };
 function applyTheme(key) {
+  key = OLD_THEMES[key] || key;
   const t = THEMES.find(x => x.key === key) || THEMES[0], st = document.documentElement.style;
   THEMES.forEach(x => Object.keys(x.vars).forEach(v => st.removeProperty(v)));
   Object.entries(t.vars).forEach(([v, c]) => st.setProperty(v, c));
@@ -725,9 +825,9 @@ function applyTheme(key) {
 }
 applyTheme(ls.get('diari.theme'));
 function openThemes() {
-  const cur = (data.meta && data.meta.theme) || ls.get('diari.theme') || THEMES[0].key;
+  const k0 = (data.meta && data.meta.theme) || ls.get('diari.theme') || THEMES[0].key, cur = OLD_THEMES[k0] || k0;
   openCard(`<h3>Colors del diari</h3><p>Tria els colors que més t'agradin. Es veuen a l'app i al llibre imprès, i els veureu tots dos.</p>
-    <div class="themes">${THEMES.map(t => `<button class="theme${t.key === cur ? ' on' : ''}" type="button" data-act="theme" data-k="${t.key}" aria-pressed="${t.key === cur}">
+    <div class="themes">${THEMES.map(t => `<button class="theme${t.key === cur ? ' on' : ''}" type="button" data-act="pickt" data-k="${t.key}" aria-pressed="${t.key === cur}">
       <span class="sw">${t.sw.map(c => `<i style="background:${c}"></i>`).join('')}</span><b>${esc(t.name)}</b><small>${esc(t.desc)}</small></button>`).join('')}</div>
     <div class="actions"><button class="btn primary" data-act="close">Fet</button></div>`);
 }
@@ -736,112 +836,6 @@ async function pickTheme(key) {
   card.querySelectorAll('.theme').forEach(b => { const on = b.dataset.k === key; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on) });
   data.meta.theme = key;
   await mutate(d => { d.meta.theme = key });
-}
-
-/* ================= backup: a readable copy in the diary's folder =================
-   «Còpia de seguretat» holds copia.json (what has been copied), a Google Doc with all the texts
-   and one folder of photo copies per entry. Copies are never deleted, even when an entry or a photo is. */
-const BK_NAME = 'Còpia de seguretat';
-let bk = null, bkQueue = Promise.resolve();
-async function bkLoad() {
-  if (bk && bk.diari === folderId) return bk;
-  const f = await list(`'${folderId}' in parents and name='${qName(BK_NAME)}' and mimeType='${FOLDER_MIME}' and trashed=false`);
-  const folder = f[0] ? f[0].id : await createFolder(BK_NAME, folderId);
-  const j = await list(`'${folder}' in parents and name='copia.json' and trashed=false`);
-  const state = { doc: null, entries: {} };
-  if (j[0]) { try { Object.assign(state, await getJSON(`${DRIVE}/files/${j[0].id}?alt=media&supportsAllDrives=true`)) } catch (e) { if (e instanceof Redirecting) throw e; console.warn('copia.json', e) } }
-  bk = { diari: folderId, folder, fileId: j[0] ? j[0].id : null, state };
-  return bk;
-}
-async function bkSave() {
-  const blob = new Blob([JSON.stringify(bk.state)], { type: 'application/json' });
-  if (bk.fileId) await uploadFile({}, blob, bk.fileId);
-  else bk.fileId = await uploadFile({ name: 'copia.json', mimeType: 'application/json', parents: [bk.folder] }, blob);
-}
-const safeName = t => String(t || '').replace(/[\\/:*?"<>|#%]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
-const bkLabel = e => safeName([e.date, e.title].filter(Boolean).join(' · ')) || 'Entrada';
-const bkChanged = e => { const r = bk.state.entries[e.id]; return !r || r.date !== (e.date || '') || r.title !== (e.title || '') || JSON.stringify(r.paras) !== JSON.stringify(e.paras || []) || (e.photos || []).some(p => !r.photos.includes(p.id)) };
-async function bkEntry(e) {
-  const r = bk.state.entries[e.id] || (bk.state.entries[e.id] = { photos: [] });
-  Object.assign(r, { date: e.date || '', title: e.title || '', chapter: !!e.chapter, paras: (e.paras || []).slice() });
-  for (const p of (e.photos || []).filter(p => !r.photos.includes(p.id))) {
-    if (!r.folder) r.folder = await createFolder(bkLabel(e), bk.folder);
-    try {
-      await api(`${DRIVE}/files/${p.id}/copy?fields=id&supportsAllDrives=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${bkLabel(e)} - ${r.photos.length + 1}.jpg`, parents: [r.folder] }) });
-    } catch (err) { if (err instanceof Redirecting) throw err; if (err.status !== 404) throw err; console.warn('photo gone, not copied', p.id) }
-    r.photos.push(p.id);
-  }
-}
-function bkHTML() {
-  const st = bk.state, cur = new Set(data.entries.map(e => e.id));
-  const one = id => {
-    const r = st.entries[id]; if (!r) return '';
-    const paras = r.paras.map(t => `<p>${esc(t).replace(/\n/g, '<br>')}</p>`).join('');
-    if (r.chapter) return `<h1>${esc(r.title || 'Capítol')}</h1>${paras}`;
-    return `<h2>${esc([r.date, r.title].filter(Boolean).join(' · ') || 'Entrada')}</h2>${paras}`
-      + (r.folder ? `<p><a href="https://drive.google.com/drive/folders/${encodeURIComponent(r.folder)}">Fotos d'aquest dia (${r.photos.length})</a></p>` : '');
-  };
-  const gone = Object.keys(st.entries).filter(id => !cur.has(id));
-  return `<html><head><meta charset="utf-8"></head><body><h1>${esc(data.meta.title || DEFAULT_TITLE)}</h1>
-    <p><i>Còpia de seguretat feta per Diaris Nidia. Actualitzada el ${esc(new Date().toLocaleString('ca'))}.</i></p>
-    ${data.entries.map(e => one(e.id)).join('')}${gone.length ? `<h1>Entrades esborrades o unides</h1>${gone.map(one).join('')}` : ''}</body></html>`;
-}
-async function bkWriteDoc() {
-  const name = 'Còpia de seguretat — ' + (data.meta.title || DEFAULT_TITLE), blob = () => new Blob([bkHTML()], { type: 'text/html' });
-  if (bk.state.doc) {
-    try { await uploadFile({ name }, blob(), bk.state.doc); return }
-    catch (e) { if (e instanceof Redirecting) throw e; console.warn('doc update failed, making a new one', e) }
-  }
-  const old = bk.state.doc;
-  bk.state.doc = await uploadFile({ name, mimeType: 'application/vnd.google-apps.document', parents: [bk.folder] }, blob());
-  if (old) await trashFile(old);
-}
-/* queue a backup after a change; extra = entry objects no longer in data (deleted ones) */
-function backupSoon(ids = [], extra = []) {
-  if (!folderId) return bkQueue;
-  const fid = folderId;
-  bkQueue = bkQueue.then(async () => {
-    if (fid !== folderId) return;
-    await bkLoad();
-    for (const e of extra) await bkEntry(e);
-    for (const id of ids) { const e = data.entries.find(x => x.id === id); if (e) await bkEntry(e) }
-    await bkWriteDoc(); await bkSave();
-  }).catch(err => { if (err instanceof Redirecting) return; console.warn('backup', err); toast("No s'ha pogut fer la còpia de seguretat. Ho pots fer a Més opcions → Còpia de seguretat.", 6000) });
-  return bkQueue;
-}
-const driveLink = (id, doc) => id ? `https://${doc ? 'docs.google.com/document/d/' + encodeURIComponent(id) : 'drive.google.com/drive/folders/' + encodeURIComponent(id)}` : '';
-async function openBackup() {
-  busy('Còpia de seguretat', 'Mirant què hi ha copiat…');
-  await bkQueue; await bkLoad();
-  const pend = data.entries.filter(bkChanged).length;
-  openCard(`<h3>Còpia de seguretat</h3>
-    <p>Cada vegada que deseu una entrada, l'app en guarda una còpia a la carpeta «${esc(BK_NAME)}» del diari: el text va a un Google Docs i les fotos es copien en una carpeta per dia. Si després esborreu una entrada o una foto, la còpia es queda.</p>
-    <p>${pend ? `Hi ha <b>${pend}</b> ${pend === 1 ? 'entrada que encara no té' : 'entrades que encara no tenen'} còpia (per exemple, les importades del Google Docs).` : 'Totes les entrades tenen còpia.'}</p>
-    <div class="menu">${bk.state.doc ? `<a class="btn" href="${driveLink(bk.state.doc, true)}" target="_blank" rel="noopener">Obre el Google Docs de la còpia</a>` : ''}<a class="btn" href="${driveLink(bk.folder)}" target="_blank" rel="noopener">Obre la carpeta de la còpia</a></div>
-    <div class="actions"><button class="btn" data-act="close">Tanca</button>${pend ? `<button class="btn primary" data-act="backupall">Fes la còpia de ${pend === 1 ? "l'entrada" : 'les ' + pend + ' entrades'}</button>` : ''}</div>`);
-}
-async function backupAll() {
-  ensureToken(1500);
-  busy('Còpia de seguretat', 'Preparant…');
-  await bkQueue; await bkLoad();
-  const todo = data.entries.filter(bkChanged);
-  importing = true; keepAwake(true);
-  try {
-    for (const [i, e] of todo.entries()) {
-      if (!token(300)) {
-        await bkWriteDoc(); await bkSave();
-        openCard(`<h3>Cal tornar a entrar</h3><p>Google demana tornar a entrar cada hora. El que s'ha copiat fins ara està desat. Prem Continua i després torna a <b>Més opcions → Còpia de seguretat</b>: continuarà on s'ha quedat.</p>
-          <div class="actions"><button class="btn primary" data-act="login">Continua</button></div>`, true);
-        return;
-      }
-      progress(`Copiant: ${i + 1} de ${todo.length}`, (i + 1) / todo.length);
-      await bkEntry(e);
-      if (i % 15 === 14) await bkSave();
-    }
-    progress('Escrivint el Google Docs…');
-    await bkWriteDoc(); await bkSave();
-  } finally { importing = false; keepAwake(false) }
-  closeCard(); toast('Còpia de seguretat feta', 4000);
 }
 
 /* ================= several diaries ================= */
@@ -878,14 +872,50 @@ async function newDiari(name) {
   closeCard(); render(); window.scrollTo(0, 0); toast('Diari creat: ' + name);
 }
 
+/* ---- photo layout of one entry (size, how many on the first page, crop/whole, above/below text) ---- */
+let layEdit = null;
+function openLayout(e) {
+  const l = e.lay || {}, n = (e.photos || []).length;
+  const keep = layEdit && layEdit.id === e.id ? layEdit.before : JSON.stringify({ lay: e.lay || null, variant: e.variant || 0, photos: e.photos });
+  layEdit = { id: e.id, before: keep };
+  const seg = (name, val, opts) => `<div class="seg" role="group">${opts.map(([v, t]) => `<button type="button" class="${String(val) === String(v) ? 'on' : ''}" data-act="lay" data-k="${name}" data-v="${v}">${t}</button>`).join('')}</div>`;
+  openCard(`<h3>Fotos de la pàgina</h3>
+    <p>${esc(e.date || e.title || '')} · ${n} foto${n === 1 ? '' : 's'}. Els canvis es veuen al llibre de seguida.</p>
+    <div class="fld"><label>Mida de les fotos</label>${seg('size', l.size || 'm', [['s', 'Petites'], ['m', 'Mitjanes'], ['l', 'Grans']])}</div>
+    <div class="fld"><label>Fotos a la primera pàgina (amb el text)</label>${seg('first', l.first == null ? 'auto' : l.first, [['auto', 'Auto'], ...[0, 1, 2, 3, 4].filter(k => k <= n).map(k => [k, String(k)])])}</div>
+    <div class="fld"><label>Fotos a les pàgines següents</label>${seg('per', l.per || 'auto', [['auto', 'Auto'], [1, '1'], [2, '2'], [3, '3'], [4, '4']])}</div>
+    <div class="fld"><label>Com es veuen</label>${seg('fit', l.fit || 'cover', [['cover', 'Omplen el requadre'], ['contain', 'Senceres, sense retallar']])}</div>
+    <div class="fld"><label>On van les fotos</label>${seg('variant', e.variant || 0, [[0, 'Sota el text'], [1, 'Sobre el text']])}</div>
+    ${n > 1 ? `<div class="fld"><label>Ordre (la primera és la més gran)</label><div class="thumbs" id="lthumbs"></div></div>` : ''}
+    <div class="actions"><button class="btn" data-act="layundo">Desfés</button><button class="btn primary" data-act="laysave">Fet</button></div>`, true);
+  drawLayThumbs(); jumpTo(e.id);
+}
+function drawLayThumbs() {
+  const box = $('#lthumbs'); if (!box) return;
+  const e = data.entries.find(x => x.id === layEdit.id), n = e.photos.length;
+  box.innerHTML = e.photos.map((p, i) => `<div class="thumb"><div class="th-img"><img data-tpid="${esc(p.id)}" src="${mem.get(p.id) || ''}" alt="Foto ${i + 1}"><span class="th-n">${i + 1}</span></div>
+    <div class="th-ctl"><button type="button" data-act="layleft" data-i="${i}" aria-label="Mou la foto ${i + 1} abans"${i ? '' : ' disabled'}>‹</button><span class="th-sp"></span><button type="button" data-act="layright" data-i="${i}" aria-label="Mou la foto ${i + 1} després"${i < n - 1 ? '' : ' disabled'}>›</button></div></div>`).join('');
+  box.querySelectorAll('img[data-tpid]').forEach(img => { if (!img.getAttribute('src')) photoURL(img.dataset.tpid).then(u => img.src = u).catch(() => {}) });
+}
+function jumpTo(id) {
+  const b = book.querySelector(`[data-id="${CSS.escape(id)}"]`); if (b) b.closest('.sheet').scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+function layApply(k, v) {
+  const e = data.entries.find(x => x.id === layEdit.id); if (!e) return;
+  if (k === 'variant') e.variant = +v;
+  else { e.lay = { ...(e.lay || {}) }; if (v === 'auto') delete e.lay[k]; else e.lay[k] = (k === 'first' || k === 'per') ? +v : v; }
+  openLayout(e);
+  render(); jumpTo(e.id);
+}
+
 /* ================= menu, cover, share, print ================= */
 function openMenu() {
   openCard(`<h3>Més opcions</h3><div class="menu">
     <button class="btn" data-act="docsimport">Importa del Google Docs</button>
     <button class="btn" data-act="diaris">Canvia de diari o crea'n un de nou</button>
-    <button class="btn" data-act="backup">Còpia de seguretat</button>
     <button class="btn" data-act="themes">Colors del diari</button>
     <button class="btn" data-act="cover">Edita la portada</button>
+    <button class="btn" data-act="backupinfo">Còpia de seguretat</button>
     <button class="btn" data-act="share">Comparteix el diari amb algú</button>
     <button class="btn" data-act="refresh">Actualitza (veure els canvis de l'altre)</button>
     <button class="btn" data-act="install">Posa-la a la pantalla del mòbil</button>
@@ -1019,12 +1049,27 @@ document.addEventListener('click', async ev => {
     else if (a === 'picklink') { const id = docIdFrom($('#d-link').value.trim()); if (!id) { toast("Aquest enllaç no sembla d'un Google Docs."); return } pickDoc(id) }
     else if (a === 'dodocimport') doDocImport(b.dataset.doc);
     else if (a === 'edit' && e) openEditor(e);
+    else if (a === 'layout' && e) openLayout(e);
+    else if (a === 'lay') layApply(b.dataset.k, b.dataset.v);
+    else if (a === 'layleft' || a === 'layright') {
+      const x = data.entries.find(y => y.id === layEdit.id), i = +b.dataset.i, j = a === 'layleft' ? i - 1 : i + 1;
+      x.photos = x.photos.slice(); [x.photos[i], x.photos[j]] = [x.photos[j], x.photos[i]]; drawLayThumbs(); render(); jumpTo(x.id);
+    }
+    else if (a === 'layundo') {
+      const x = data.entries.find(y => y.id === layEdit.id), o = JSON.parse(layEdit.before);
+      if (x) { if (o.lay) x.lay = o.lay; else delete x.lay; x.variant = o.variant; x.photos = o.photos }
+      layEdit = null; closeCard(); render();
+    }
+    else if (a === 'laysave') {
+      const x = data.entries.find(y => y.id === layEdit.id); layEdit = null; closeCard();
+      if (x) { const id = x.id, lay = x.lay, variant = x.variant || 0, photos = x.photos; busy('Desant'); await mutate(d => { const y = d.entries.find(z => z.id === id); if (y) { if (lay && Object.keys(lay).length) y.lay = lay; else delete y.lay; y.variant = variant; y.photos = photos } }); closeCard(); render(); jumpTo(id); toast('Desat') }
+    }
+    else if (a === 'backupinfo') openBackupInfo();
+    else if (a === 'backupall') backupPending(true);
     else if (a === 'variant' && e) { const id = e.id; e.variant = e.variant ? 0 : 1; render(); await mutate(d => { const x = d.entries.find(y => y.id === id); if (x) x.variant = e.variant }) }
     else if (a === 'cover') openCover();
     else if (a === 'themes') openThemes();
-    else if (a === 'backup') await openBackup();
-    else if (a === 'backupall') await backupAll();
-    else if (a === 'theme') pickTheme(b.dataset.k);
+    else if (a === 'pickt') pickTheme(b.dataset.k);
     else if (a === 'savecover') { const t = $('#c-title').value.trim() || DEFAULT_TITLE, s = $('#c-sub').value.trim(); busy('Desant'); await mutate(d => { d.meta = Object.assign(d.meta || {}, { title: t, sub: s }) }); closeCard(); render() }
     else if (a === 'share') openShare();
     else if (a === 'doshare') {
@@ -1058,14 +1103,14 @@ document.addEventListener('click', async ev => {
       if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'Segur? Torna a prémer'; return }
       const ed = edit; const old = data.entries.find(x => x.id === ed.id);
       busy('Esborrant'); await mutate(d => { d.entries = d.entries.filter(x => x.id !== ed.id) });
-      if (old) { progress('Desant la còpia de seguretat…'); await backupSoon([], [old]); for (const p of old.photos || []) await trashFile(p.id) }
+      if (old) for (const p of old.photos || []) await trashFile(p.id);
       ls.del('diari.draft'); closeCard(); render(); toast('Entrada esborrada');
     }
     else if (a === 'merge') {
-      const id = edit.id, ix = data.entries.findIndex(x => x.id === id), prevId = ix > 0 ? data.entries[ix - 1].id : null; busy('Unint');
+      const id = edit.id; busy('Unint');
       await mutate(d => { const i = d.entries.findIndex(x => x.id === id); if (i < 1) return; const cur = d.entries[i], prev = d.entries[i - 1];
         prev.paras.push(...(cur.title ? [cur.title] : []), ...(cur.date && cur.date !== prev.date ? [cur.date] : []), ...cur.paras); prev.photos = (prev.photos || []).concat(cur.photos || []); d.entries.splice(i, 1) });
-      closeCard(); render(); toast('Entrades unides'); if (prevId) backupSoon([prevId]);
+      closeCard(); render(); toast('Entrades unides');
     }
   } catch (err) { fail(err, 'fer-ho') }
 });
@@ -1113,6 +1158,9 @@ async function boot() {
     }
     data = await readData();
     render();
+    const rs = JSON.parse(ls.get('diari.resume') || 'null');
+    if (rs) { ls.del('diari.resume'); const imp = (data.meta && data.meta.imported) || {}; const tabs = rs.tabs.filter(t => !imp[rs.doc + ':' + t]); if (tabs.length) { doDocImport(rs.doc, tabs); return } }
+    setTimeout(() => backupPending(false), 4000);
     const draft = JSON.parse(ls.get('diari.draft') || 'null');
     if (draft) { ls.del('diari.draft'); const e = draft.id ? data.entries.find(x => x.id === draft.id) : null; openEditor(e, draft); toast("He recuperat el text que estaves escrivint. Si hi havia fotos noves, torna-les a afegir.", 6000) }
   } catch (err) {

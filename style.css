@@ -243,3 +243,14 @@ a.btn{color:var(--ink)}
   .page{transform:none}
   .ph img,.cimg img{opacity:1;transition:none}
 }
+
+/* ---- photo layout per entry ---- */
+.sz-s .ph{flex:0 0 auto;height:72mm;min-height:0}
+.sz-s.p-gallery .ph{flex:0 0 auto;height:150mm}
+.sz-l .ph{flex:1 1 0;min-height:150mm}
+.fit-contain .ph figure{background:transparent}
+.fit-contain .ph img{object-fit:contain}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button{border:1px solid var(--line);background:var(--desk);color:var(--ink);padding:8px 12px;border-radius:999px;font-weight:500}
+.seg button.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.th-sp{flex:1}
