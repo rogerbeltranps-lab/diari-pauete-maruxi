@@ -5,6 +5,20 @@ Web-app per convertir el diari familiar en un llibre de fotos per imprimir.
 - **On és l'app:** https://rogerbeltranps-lab.github.io/diari-pauete-maruxi/
 - **On es guarda el contingut:** a la carpeta «Diari de Pauete i Maruxi» (o «Diari Pauete i Mariuxi», el nom antic, que l'app també reconeix) del Google Drive (un arxiu `diari.json` amb els textos i una carpeta `fotos`). Res del diari es guarda en aquest repositori.
 
+## Login i qui pot veure el diari
+
+![Esquema: com funciona el login i qui veu el diari](docs/esquema-login.png)
+
+- **Qui fa el login:** directament **Google** (inici de sessió de Google amb OAuth). No hi ha Firebase ni cap servidor propi: l'app és una web feta només de fitxers, publicada amb GitHub Pages, que parla directament amb Google Drive i Google Docs des del navegador.
+- **Qui pot entrar:** l'app de Google està en mode **Prova**, així que només poden entrar els «usuaris de prova» apuntats a Google Cloud (Roger i la Nidia). Qualsevol altre compte és rebutjat.
+- **El permís:** en entrar, Google dona a l'app un permís per al Drive que dura **1 hora** i es guarda al navegador d'aquell aparell. Després es torna a demanar.
+- **On són els textos i les fotos:** al Google Drive del Roger, a la carpeta del diari, compartida només amb la Nidia. En aquest repositori (que és públic) només hi ha el programa.
+- **Còpia de seguretat:** per posar una foto dins el Google Docs de còpia, Google obliga a fer-la pública uns segons. L'app la torna privada de seguida; si no pot (per exemple, si es talla la connexió), ho torna a provar la vegada següent, i un cop al dia busca qualsevol foto del diari que hagi quedat pública i la torna privada.
+- **«Sortir»:** treu el permís i també esborra les fotos i l'esborrany guardats en aquell aparell.
+- **Codi d'altres webs:** l'app no carrega cap programa d'un altre web. El lector de .docx (mammoth 1.6.0) és una còpia dins `vendor/` i només es carrega quan s'importa un .docx.
+
+Revisat l'11/10/2026.
+
 ## Configuració (una sola vegada, uns 15 minuts)
 
 Cal crear un «ID de client» de Google perquè l'app pugui fer login i guardar al Drive.

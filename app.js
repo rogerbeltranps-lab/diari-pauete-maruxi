@@ -45,7 +45,12 @@ function login() {
   location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams(q);
   throw new Redirecting();
 }
-function logout() { ls.del('diari.tok'); ls.del('diari.hint'); ls.del('diari.folder'); location.reload() }
+/* «Sortir» also forgets the photos and text this device kept, so the next person on it sees nothing */
+async function logout() {
+  ['diari.tok', 'diari.hint', 'diari.folder', 'diari.was', 'diari.draft', 'diari.resume', 'diari.group'].forEach(k => ls.del(k));
+  try { await caches.delete('diari-fotos') } catch (e) {}
+  location.reload();
+}
 function ensureToken(minLeft = 120) { if (!token(minLeft)) { saveDraft(); login() } return token(minLeft) }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -250,6 +255,11 @@ function blocksToEntries(blocks, tabTitle) {
     if (b.imgs && b.imgs.length) { if (!cur) start(''); cur.imgs.push(...b.imgs) }
   }
   return out.filter(e => e.date || e.title || e.paras.length || e.imgs.length);
+}
+/* the Word reader is a copy kept in this repo (vendor/), loaded only when a .docx is imported */
+function loadMammoth() {
+  if (typeof mammoth !== 'undefined') return Promise.resolve(true);
+  return new Promise(res => { const s = document.createElement('script'); s.src = 'vendor/mammoth.browser.min.js'; s.onload = () => res(typeof mammoth !== 'undefined'); s.onerror = () => res(false); document.head.appendChild(s) });
 }
 async function parseDocx(buf) {
   const res = await mammoth.convertToHtml({ arrayBuffer: buf });
@@ -549,7 +559,7 @@ async function mutate(fn) {
 /* ================= import ================= */
 $('#f-docx').onchange = async ev => {
   const files = [...ev.target.files].sort((x, y) => x.name.localeCompare(y.name, 'ca', { numeric: true })); ev.target.value = ''; if (!files.length) return;
-  if (typeof mammoth === 'undefined') { toast("No s'ha pogut carregar el lector de Word. Revisa la connexió."); return }
+  if (!await loadMammoth()) { toast("No s'ha pogut carregar el lector de Word. Revisa la connexió."); return }
   try {
     ensureToken(1500);
     busy('Important el diari', 'Llegint ' + (files.length > 1 ? files.length + ' arxius' : '«' + files[0].name + '»') + '…');
@@ -697,10 +707,30 @@ async function ensureBackupPlace() {
   bk = { folder: fold, doc }; return bk;
 }
 const docsBatch = (doc, requests) => getJSON(`${DOCS}${doc}:batchUpdate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requests }) });
-/* Google Docs only inserts images from a public address, so each photo is shared by link for a few seconds and unshared right after. */
+/* Google Docs only inserts images from a public address, so each photo is shared by link for a few seconds and unshared right after.
+   Each share is noted on this device first; if the unshare fails (connection lost, page closed), unsharePhotos() retries it later,
+   and once a day it also looks for any photo of the diary still shared by link. */
+const pubList = () => { try { return JSON.parse(ls.get('diari.pub') || '[]') } catch (e) { return [] } };
+const pubSave = l => l.length ? ls.set('diari.pub', JSON.stringify(l)) : ls.del('diari.pub');
+async function unsharePhotos() {
+  for (const id of pubList()) {
+    try { await removeAnyone(id); pubSave(pubList().filter(x => x !== id)) } catch (e) { if (e instanceof Redirecting) throw e; if (e.status === 404) pubSave(pubList().filter(x => x !== id)) }
+  }
+  const key = 'diari.sweep.' + folderId;
+  if (!folderId || Date.now() - (+ls.get(key) || 0) < 864e5) return;
+  const open = await listAll(`'${folderId}' in parents and mimeType='${FOLDER_MIME}' and name='fotos' and trashed=false`)
+    .then(fs => Promise.all(fs.map(f => listAll(`'${f.id}' in parents and visibility='anyoneWithLink' and trashed=false`)))).then(a => a.flat());
+  for (const f of open) { try { await removeAnyone(f.id) } catch (e) { if (e instanceof Redirecting) throw e } }
+  ls.set(key, String(Date.now()));
+}
+async function removeAnyone(id) {
+  const r = await getJSON(`${DRIVE}/files/${id}/permissions?fields=permissions(id,type)&supportsAllDrives=true`);
+  for (const pm of r.permissions || []) if (pm.type === 'anyone') await api(`${DRIVE}/files/${id}/permissions/${pm.id}?supportsAllDrives=true`, { method: 'DELETE' });
+}
 async function docInsertPhoto(doc, p) {
   let perm = null;
   try {
+    pubSave([...pubList().filter(x => x !== p.id), p.id]);
     perm = await getJSON(`${DRIVE}/files/${p.id}/permissions?fields=id&supportsAllDrives=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'reader', type: 'anyone' }) });
     const width = { magnitude: (p.w || 4) >= (p.h || 3) ? 430 : 300, unit: 'PT' };
     for (const uri of [`https://lh3.googleusercontent.com/d/${p.id}`, `https://drive.google.com/uc?export=download&id=${p.id}`]) {
@@ -708,7 +738,11 @@ async function docInsertPhoto(doc, p) {
       catch (e) { if (e instanceof Redirecting) throw e }
     }
   } catch (e) { if (e instanceof Redirecting) throw e }
-  finally { if (perm && perm.id) { try { await api(`${DRIVE}/files/${p.id}/permissions/${perm.id}?supportsAllDrives=true`, { method: 'DELETE' }) } catch (e) {} } }
+  finally {
+    let done = !perm;
+    if (perm && perm.id) { try { await api(`${DRIVE}/files/${p.id}/permissions/${perm.id}?supportsAllDrives=true`, { method: 'DELETE' }); done = true } catch (e) {} }
+    if (done) pubSave(pubList().filter(x => x !== p.id));
+  }
   await docsBatch(doc, [{ insertText: { endOfSegmentLocation: {}, text: `[Foto: https://drive.google.com/file/d/${p.id}/view]\n` } }]);
   return false;
 }
@@ -736,6 +770,7 @@ async function backupPending(manual) {
   if (backingUp || !folderId) return;
   backingUp = true;
   try {
+    await unsharePhotos().catch(e => { if (e instanceof Redirecting) throw e; console.warn('unshare', e) });
     const todo = data.entries.filter(e => e.mt && (!e.bk || e.bk < e.mt));
     if (!todo.length) { if (manual) toast('La còpia de seguretat està al dia.'); return }
     if (manual) busy('Còpia de seguretat', `${todo.length} entrades`);
