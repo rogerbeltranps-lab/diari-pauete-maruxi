@@ -492,32 +492,34 @@ async function runImport(groupsList, resolveImg) {
           }
         });
       };
-      for (let i = from; i < g.entries.length; i++) {
+      for (let i = from; i < g.entries.length; i += 4) {
         if (!token(600)) {
-          if (out.length) await flush(false, i);
           importing = false; keepAwake(false);
           openCard(`<h3>Cal tornar a entrar</h3><p>Google demana tornar a entrar cada hora. El que s'ha importat fins ara està desat. Prem Continua i després torna a <b>Importa del Google Docs</b>: continuarà on s'ha quedat.</p>
             <div class="actions"><button class="btn primary" data-act="login">Continua</button></div>`, true);
           render(); return;
         }
-        const pe = g.entries[i], slots = new Array(pe.imgs.length).fill(null);
+        const block = g.entries.slice(i, i + 4);
+        const slots = block.map(pe => new Array(pe.imgs.length).fill(null));
+        const tasks = []; block.forEach((pe, bi) => pe.imgs.forEach((im, k) => tasks.push([bi, k, im, pe])));
         let next = 0;
         const worker = async () => {
-          while (next < pe.imgs.length) {
-            const k = next++, im = pe.imgs[k];
+          while (next < tasks.length) {
+            const [bi, k, im, pe] = tasks[next++];
             try {
               const r = await resolveImg(im);
-              if (r) { slots[k] = await uploadPhoto(r, pe.date || pe.title); nPh++ } else failed++;
+              if (r) { slots[bi][k] = await uploadPhoto(r, pe.date || pe.title); nPh++ } else failed++;
             } catch (e) { if (e instanceof Redirecting) throw e; console.warn('photo skipped', e); failed++ }
-            progress(`${g.label}: dia ${i + 1} de ${g.entries.length} · fotos ${++done} de ${total}`, done / Math.max(total, 1));
+            progress(`${g.label}: dia ${Math.min(i + 4, g.entries.length)} de ${g.entries.length} · fotos ${++done} de ${total}`, done / Math.max(total, 1));
           }
         };
-        await Promise.all([worker(), worker(), worker(), worker()]);
-        const ph = slots.filter(Boolean);
-        out.push({ id: uid(), src: g.key || undefined, chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: ph, variant: i % 2 });
-        pe.chapter ? nCh++ : nEn++;
-        const last = i === g.entries.length - 1;
-        if (last || out.length >= 4) { progress(`${g.label}: desant…`); await flush(last, i + 1) }
+        await Promise.all(Array.from({ length: 6 }, worker));
+        block.forEach((pe, bi) => {
+          out.push({ id: uid(), src: g.key || undefined, chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: slots[bi].filter(Boolean), variant: (i + bi) % 2 });
+          pe.chapter ? nCh++ : nEn++;
+        });
+        const upto = i + block.length, last = upto >= g.entries.length;
+        progress(`${g.label}: desant…`); await flush(last, upto);
       }
       if (g.entries.length === from) await flush(true, from);
     }
