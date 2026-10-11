@@ -130,13 +130,34 @@ async function writeData(d) {
   if (dataFileId) await uploadFile({}, blob, dataFileId);
   else dataFileId = await uploadFile({ name: 'diari.json', mimeType: 'application/json', parents: [folderId] }, blob);
 }
+/* small copy (700 px) for viewing on screen; the full photo is only fetched for printing */
+let thumbsFolderId = null;
+async function ensureThumbsFolder() {
+  if (thumbsFolderId) return thumbsFolderId;
+  const f = await list(`'${folderId}' in parents and name='fotos-mini' and mimeType='${FOLDER_MIME}' and trashed=false`);
+  thumbsFolderId = f[0] ? f[0].id : await createFolder('fotos-mini', folderId);
+  return thumbsFolderId;
+}
+async function makeThumb(blob) {
+  const u = URL.createObjectURL(blob);
+  try { return await shrink(u, false, 700, .78) } finally { URL.revokeObjectURL(u) }
+}
+async function uploadThumb(blob, name) {
+  const t = await makeThumb(blob); if (!t) return null;
+  await ensureThumbsFolder();
+  const id = await uploadFile({ name: 'mini-' + name, mimeType: 'image/jpeg', parents: [thumbsFolderId] }, t.blob);
+  mem.set(id, URL.createObjectURL(t.blob));
+  try { const c = await caches.open('diari-fotos'); await c.put('f/' + id, new Response(t.blob)) } catch (e) {}
+  return id;
+}
 async function uploadPhoto(rec, label) {
   await ensurePhotosFolder();
   const name = (label || 'foto').replace(/[^\p{L}\p{N} _-]+/gu, '').slice(0, 40).trim().replace(/\s+/g, '-') + '-' + uid().slice(0, 6) + '.jpg';
   const id = await uploadFile({ name, mimeType: 'image/jpeg', parents: [photosFolderId] }, rec.blob);
   const url = URL.createObjectURL(rec.blob); mem.set(id, url);
   try { const c = await caches.open('diari-fotos'); await c.put('f/' + id, new Response(rec.blob)) } catch (e) {}
-  return { id, w: rec.w, h: rec.h };
+  let t = null; try { t = await uploadThumb(rec.blob, name) } catch (e) { if (e instanceof Redirecting) throw e }
+  return t ? { id, w: rec.w, h: rec.h, t } : { id, w: rec.w, h: rec.h };
 }
 async function trashFile(id) { try { await api(`${DRIVE}/files/${id}?supportsAllDrives=true`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{"trashed":true}' }) } catch (e) { if (e instanceof Redirecting) throw e } }
 
@@ -144,7 +165,7 @@ async function trashFile(id) { try { await api(`${DRIVE}/files/${id}?supportsAll
 const mem = new Map(), pending = new Map();
 let active = 0; const waiters = [];
 async function limited(fn) {
-  while (active >= 4) await new Promise(r => waiters.push(r));
+  while (active >= 6) await new Promise(r => waiters.push(r));
   active++; try { return await fn() } finally { active--; const w = waiters.shift(); w && w() }
 }
 function photoURL(id) {
@@ -161,24 +182,25 @@ function photoURL(id) {
   }).finally(() => pending.delete(id));
   pending.set(id, p); return p;
 }
-function loadImg(img) {
-  if (img.dataset.done) return Promise.resolve();
-  img.dataset.done = '1';
-  return photoURL(img.dataset.pid).then(u => new Promise(res => {
+function loadImg(img, full) {
+  const id = (!full && img.dataset.tid) || img.dataset.pid, lvl = id === img.dataset.pid ? 'full' : 'mini';
+  if (img.dataset.done === lvl || img.dataset.done === 'full') return Promise.resolve();
+  img.dataset.done = lvl;
+  return photoURL(id).then(u => new Promise(res => {
     img.onload = () => { img.classList.add('ok'); res() }; img.onerror = () => res(); img.src = u;
   })).catch(e => { if (e instanceof Redirecting) return; delete img.dataset.done });
 }
 const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { io.unobserve(e.target); loadImg(e.target) } }), { rootMargin: '1200px 0px' });
 
 /* ================= image shrinking ================= */
-async function shrink(src, cross) {
+async function shrink(src, cross, max = 1800, q = .86) {
   const img = new Image(); if (cross) img.crossOrigin = 'anonymous'; img.src = src;
   try { await img.decode() } catch (e) { return null }
   const w = img.naturalWidth, h = img.naturalHeight; if (!w || !h || (w < 90 && h < 90)) return null;
-  const r = Math.min(1, 1800 / Math.max(w, h)), cw = Math.round(w * r), ch = Math.round(h * r);
+  const r = Math.min(1, max / Math.max(w, h)), cw = Math.round(w * r), ch = Math.round(h * r);
   const c = document.createElement('canvas'); c.width = cw; c.height = ch; const x = c.getContext('2d');
   x.fillStyle = '#fff'; x.fillRect(0, 0, cw, ch); x.drawImage(img, 0, 0, cw, ch);
-  let blob = null; try { blob = await new Promise(r => c.toBlob(r, 'image/jpeg', .86)) } catch (e) { return null }
+  let blob = null; try { blob = await new Promise(r => c.toBlob(r, 'image/jpeg', q)) } catch (e) { return null }
   return blob ? { blob, w: cw, h: ch } : null;
 }
 async function shrinkFile(file) { const u = URL.createObjectURL(file); try { return await shrink(u) } finally { URL.revokeObjectURL(u) } }
@@ -366,7 +388,7 @@ function entryPages(e) {
   }
   return pages;
 }
-const imgTag = p => `<img data-pid="${esc(p.id)}" alt="">`;
+const imgTag = p => `<img data-pid="${esc(p.id)}"${p.t ? ` data-tid="${esc(p.t)}"` : ''} alt="">`;
 function gridHTML(P, variant) {
   const n = P.length, L = p => p.w >= p.h * 1.05; let areas, cols = '', rows = '';
   if (n === 1) areas = '"a"';
@@ -1001,7 +1023,7 @@ async function doPrint() {
   try {
     busy('Preparant per imprimir', `Carregant fotos: 0 de ${imgs.length}`);
     let n = 0;
-    await Promise.all(imgs.map(img => loadImg(img).then(() => progress(`Carregant fotos: ${++n} de ${imgs.length}`, n / imgs.length))));
+    await Promise.all(imgs.map(img => loadImg(img, true).then(() => progress(`Carregant fotos: ${++n} de ${imgs.length}`, n / imgs.length))));
     await Promise.all(imgs.map(i => i.decode ? i.decode().catch(() => {}) : null));
     await (document.fonts ? document.fonts.ready : null);
     closeCard();
@@ -1119,7 +1141,32 @@ document.addEventListener('visibilitychange', async () => {
   lastCheck = Date.now();
   try { const d = await readData(); if ((d.updated || 0) !== (data.updated || 0)) { data = d; render() } } catch (e) {}
 });
-window.addEventListener('beforeprint', () => book.querySelectorAll('img[data-pid]').forEach(i => { if (!i.dataset.done) loadImg(i) }));
+window.addEventListener('beforeprint', () => book.querySelectorAll('img[data-pid]').forEach(i => { if (i.dataset.done !== 'full') loadImg(i, true) }));
+
+/* one-off: make small copies of photos that don't have one yet (run from the console as diariMakeThumbs()) */
+async function makeMissingThumbs(onProgress) {
+  const todo = []; data.entries.forEach(e => (e.photos || []).forEach(p => { if (!p.t) todo.push(p) }));
+  let done = 0, made = {}, pendingSave = 0, next = 0;
+  const save = async () => { const m = made; made = {}; pendingSave = 0; await mutate(d => d.entries.forEach(e => (e.photos || []).forEach(p => { if (m[p.id]) p.t = m[p.id] }))) };
+  const worker = async () => {
+    while (next < todo.length) {
+      const p = todo[next++];
+      try {
+        let blob = null;
+        try { const c = await caches.open('diari-fotos'); const r = await c.match('f/' + p.id); if (r) blob = await r.blob() } catch (e) {}
+        if (!blob) blob = await (await api(`${DRIVE}/files/${p.id}?alt=media&supportsAllDrives=true`)).blob();
+        const t = await uploadThumb(blob, p.id + '.jpg');
+        if (t) { made[p.id] = t; pendingSave++ }
+      } catch (e) { if (e instanceof Redirecting) throw e; console.warn('thumb', p.id, e) }
+      done++; onProgress && onProgress(done, todo.length);
+      if (pendingSave >= 60) await save();
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  if (pendingSave) await save();
+  return { total: todo.length, done };
+}
+window.diariMakeThumbs = () => makeMissingThumbs((d, t) => { if (d % 20 === 0 || d === t) console.log('mini', d, '/', t) });
 
 /* ================= boot ================= */
 function setupScreen() {
