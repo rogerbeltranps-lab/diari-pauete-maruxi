@@ -193,10 +193,18 @@ function loadImg(img, full) {
 const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { io.unobserve(e.target); loadImg(e.target) } }), { rootMargin: '1200px 0px' });
 
 /* ================= image shrinking ================= */
-async function shrink(src, cross, max = 1800, q = .86) {
+async function decodeImage(src, cross) {
+  /* createImageBitmap also works while the page is in the background, where <img>.decode() can stall */
+  if (!cross && self.createImageBitmap) {
+    try { const blob = await (await fetch(src)).blob(); const bm = await createImageBitmap(blob, { imageOrientation: 'from-image' }); return { el: bm, w: bm.width, h: bm.height } } catch (e) {}
+  }
   const img = new Image(); if (cross) img.crossOrigin = 'anonymous'; img.src = src;
   try { await img.decode() } catch (e) { return null }
-  const w = img.naturalWidth, h = img.naturalHeight; if (!w || !h || (w < 90 && h < 90)) return null;
+  return { el: img, w: img.naturalWidth, h: img.naturalHeight };
+}
+async function shrink(src, cross, max = 1800, q = .86) {
+  const dec = await decodeImage(src, cross); if (!dec) return null;
+  const img = dec.el, w = dec.w, h = dec.h; if (!w || !h || (w < 90 && h < 90)) return null;
   const r = Math.min(1, max / Math.max(w, h)), cw = Math.round(w * r), ch = Math.round(h * r);
   const c = document.createElement('canvas'); c.width = cw; c.height = ch; const x = c.getContext('2d');
   x.fillStyle = '#fff'; x.fillRect(0, 0, cw, ch); x.drawImage(img, 0, 0, cw, ch);
