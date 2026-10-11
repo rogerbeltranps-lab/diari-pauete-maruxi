@@ -61,3 +61,5 @@ Web-app per convertir el diari familiar que la Nidia escrivia al Google Docs «D
 - Corregits a mà: 3 falsos capítols (postal de Nadal 2025, «1011/09/2026», «10/2026») i 2 frases amb data que havien partit una entrada (14/05/2022 i 3/07/2026). La detecció ja ho evita en futures importacions.
 - Al document original hi ha ~40 dates amb l'any que no toca el capítol (p. ex. 2024 amb dates «/2025» de setembre a desembre). Pendent que Roger decideixi si es corregeixen a l'app.
 - Noves funcions: botó «Fotos» per entrada (mida, nombre, retall, posició, ordre), «Colors del llibre» (Clàssic, Blau cel, Blau marí), «Còpia de seguretat» (carpeta + Google Docs dins la carpeta del diari) i importació que continua sola si Google demana tornar a entrar.
+
+- 11/10/2026: comparades les dues versions; Roger es queda amb «Diaris Nidia» (llibre obert, diversos diaris), que ja inclou la còpia de seguretat, el botó Fotos, la impressió amb historial i la importació que continua sola. La importació s'ha tret del menú.
