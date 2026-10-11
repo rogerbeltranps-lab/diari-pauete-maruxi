@@ -54,3 +54,10 @@ Web-app per convertir el diari familiar que la Nidia escrivia al Google Docs «D
 ## Altres coses del compte de Roger (no tocar)
 
 - Projecte Apps Script **«Mar & Pau's Crew sync - NO ESBORRAR»** (abans «Untitled project», 5/10/2026): sincronitza el full de càlcul del cangur amb l'app Mar & Pau's Crew cada 30 minuts. Roger vol que només s'executi els divendres; pendent de revisar com el va configurar abans de canviar-lo.
+
+## Actualització (11/10/2026)
+
+- Importació completa: 7 pestanyes (2022–2026, «Fotos Papis», «Fotos PAU i MAR»), 1.006 entrades, 2.320 fotos. Revisat contra el Google Docs: tot el text hi és; només falten 3 imatges de menys de 90 px (icones/adhesius) del 6/02/2026, que l'app descarta a propòsit.
+- Corregits a mà: 3 falsos capítols (postal de Nadal 2025, «1011/09/2026», «10/2026») i 2 frases amb data que havien partit una entrada (14/05/2022 i 3/07/2026). La detecció ja ho evita en futures importacions.
+- Al document original hi ha ~40 dates amb l'any que no toca el capítol (p. ex. 2024 amb dates «/2025» de setembre a desembre). Pendent que Roger decideixi si es corregeixen a l'app.
+- Noves funcions: botó «Fotos» per entrada (mida, nombre, retall, posició, ordre), «Colors del llibre» (Clàssic, Blau cel, Blau marí), «Còpia de seguretat» (carpeta + Google Docs dins la carpeta del diari) i importació que continua sola si Google demana tornar a entrar.
