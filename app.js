@@ -500,14 +500,20 @@ async function runImport(groupsList, resolveImg) {
             <div class="actions"><button class="btn primary" data-act="login">Continua</button></div>`, true);
           render(); return;
         }
-        const pe = g.entries[i], ph = [];
-        for (const im of pe.imgs) {
-          progress(`${g.label}: dia ${i + 1} de ${g.entries.length} · fotos ${++done} de ${total}`, done / Math.max(total, 1));
-          try {
-            const r = await resolveImg(im);
-            if (r) { ph.push(await uploadPhoto(r, pe.date || pe.title)); nPh++ } else failed++;
-          } catch (e) { if (e instanceof Redirecting) throw e; console.warn('photo skipped', e); failed++ }
-        }
+        const pe = g.entries[i], slots = new Array(pe.imgs.length).fill(null);
+        let next = 0;
+        const worker = async () => {
+          while (next < pe.imgs.length) {
+            const k = next++, im = pe.imgs[k];
+            try {
+              const r = await resolveImg(im);
+              if (r) { slots[k] = await uploadPhoto(r, pe.date || pe.title); nPh++ } else failed++;
+            } catch (e) { if (e instanceof Redirecting) throw e; console.warn('photo skipped', e); failed++ }
+            progress(`${g.label}: dia ${i + 1} de ${g.entries.length} · fotos ${++done} de ${total}`, done / Math.max(total, 1));
+          }
+        };
+        await Promise.all([worker(), worker(), worker(), worker()]);
+        const ph = slots.filter(Boolean);
         out.push({ id: uid(), src: g.key || undefined, chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: ph, variant: i % 2 });
         pe.chapter ? nCh++ : nEn++;
         const last = i === g.entries.length - 1;
