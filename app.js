@@ -184,7 +184,8 @@ const reNum = /\b\d{1,2}\s*[\/.\-]\s*\d{1,2}(\s*[\/.\-]\s*\d{2,4})?\b/;
 const reMon = new RegExp('\\b\\d{1,2}\\s*(de\\s+|d[\'’]\\s*|del\\s+)?(' + MONTHS + ')\\b', 'i');
 const reDay = new RegExp('^\\W*(' + DAYS + ')\\b', 'i');
 const reYear = /\b(19|20)\d{2}\b/;
-const isDateLine = t => t.length <= 70 && (reNum.test(t) || reMon.test(t) || reDay.test(t));
+const reNum2 = /(^|\D)\d{1,4}\s*\/\s*\d{1,2}\s*\/\s*\d{2,4}(\D|$)|^\W*\d{1,2}\s*\/\s*\d{4}\W*$/;
+const isDateLine = t => t.length <= 70 && (reNum.test(t) || reNum2.test(t) || reMon.test(t) || reDay.test(t));
 const isChapter = t => t.length <= 60 && reYear.test(t) && !isDateLine(t);
 /* blocks: [{t (text, may contain \n), heading, bold, imgs:[]}] → entries. tabTitle starts a chapter. */
 function blocksToEntries(blocks, tabTitle) {
@@ -197,10 +198,12 @@ function blocksToEntries(blocks, tabTitle) {
     const t = (b.t || '').trim();
     if (t) {
       const one = t.replace(/\n/g, ' ');
-      if (isChapter(one) && (b.heading || !cur || one === one.toUpperCase() || b.bold)) {
+      const early = !cur || (cur.chapter && out.length === 1);
+      if (isChapter(one) && (!tabTitle || early) && (b.heading || !cur || one === one.toUpperCase() || b.bold)) {
         if (cur && cur.chapter && !cur.paras.length && !cur.imgs.length) cur.title = clean(one); else start(one, true);
       }
       else if (hasDates ? isDateLine(one) : b.heading) start(one);
+      else if (isChapter(one) && (one === one.toUpperCase() || b.bold || b.heading)) { start(''); cur.title = one === one.toUpperCase() ? one.charAt(0) + one.slice(1).toLowerCase() : one }
       else if (b.heading && cur && !cur.title && !cur.paras.length) cur.title = one;
       else { if (!cur) start(''); cur.paras.push(t) }
     }
