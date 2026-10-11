@@ -185,7 +185,8 @@ const reMon = new RegExp('\\b\\d{1,2}\\s*(de\\s+|d[\'’]\\s*|del\\s+)?(' + MONT
 const reDay = new RegExp('^\\W*(' + DAYS + ')\\b', 'i');
 const reYear = /\b(19|20)\d{2}\b/;
 const reNum2 = /(^|\D)\d{1,4}\s*\/\s*\d{1,2}\s*\/\s*\d{2,4}(\D|$)|^\W*\d{1,2}\s*\/\s*\d{4}\W*$/;
-const isDateLine = t => t.length <= 70 && (reNum.test(t) || reNum2.test(t) || reMon.test(t) || reDay.test(t));
+const reLead = new RegExp('^\\W*(\\d|' + DAYS + '|finde|semana|setmana|cap de setmana)', 'i');
+const isDateLine = t => t.length <= 70 && (reNum.test(t) || reNum2.test(t) || reMon.test(t) || reDay.test(t)) && (reLead.test(t) || t.split(/\s+/).length <= 4);
 const isChapter = t => t.length <= 60 && reYear.test(t) && !isDateLine(t);
 /* blocks: [{t (text, may contain \n), heading, bold, imgs:[]}] → entries. tabTitle starts a chapter. */
 function blocksToEntries(blocks, tabTitle) {
