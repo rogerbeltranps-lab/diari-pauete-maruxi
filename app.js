@@ -638,7 +638,7 @@ async function doDocImport(id) {
 let edit = null; // {id|null, photos:[{id,w,h}|{tmp,blob,w,h,url}], removed:[]}
 function saveDraft() {
   if (!edit || !$('#f-text')) return;
-  ls.set('diari.draft', JSON.stringify({ id: edit.id, date: $('#f-date').value, title: $('#f-title').value, text: $('#f-text').value }));
+  ls.set('diari.draft', JSON.stringify({ id: edit.id, date: ($('#f-date') || {}).value || '', title: $('#f-title').value, text: $('#f-text').value }));
 }
 function editorHTML(e, draft) {
   const date = draft ? draft.date : e ? e.date : fmtDate(new Date().toISOString().slice(0, 10));
