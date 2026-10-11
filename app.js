@@ -131,12 +131,15 @@ async function writeData(d) {
   else dataFileId = await uploadFile({ name: 'diari.json', mimeType: 'application/json', parents: [folderId] }, blob);
 }
 /* small copy (700 px) for viewing on screen; the full photo is only fetched for printing */
-let thumbsFolderId = null;
-async function ensureThumbsFolder() {
-  if (thumbsFolderId) return thumbsFolderId;
-  const f = await list(`'${folderId}' in parents and name='fotos-mini' and mimeType='${FOLDER_MIME}' and trashed=false`);
-  thumbsFolderId = f[0] ? f[0].id : await createFolder('fotos-mini', folderId);
-  return thumbsFolderId;
+let thumbsFolderId = null, thumbsFolderP = null;
+function ensureThumbsFolder() {
+  if (thumbsFolderId) return Promise.resolve(thumbsFolderId);
+  if (!thumbsFolderP) thumbsFolderP = (async () => {
+    const f = await list(`'${folderId}' in parents and name='fotos-mini' and mimeType='${FOLDER_MIME}' and trashed=false`);
+    thumbsFolderId = f[0] ? f[0].id : await createFolder('fotos-mini', folderId);
+    return thumbsFolderId;
+  })().finally(() => { thumbsFolderP = null });
+  return thumbsFolderP;
 }
 async function makeThumb(blob) {
   const u = URL.createObjectURL(blob);
