@@ -63,3 +63,9 @@ Web-app per convertir el diari familiar que la Nidia escrivia al Google Docs «D
 - Noves funcions: botó «Fotos» per entrada (mida, nombre, retall, posició, ordre), «Colors del llibre» (Clàssic, Blau cel, Blau marí), «Còpia de seguretat» (carpeta + Google Docs dins la carpeta del diari) i importació que continua sola si Google demana tornar a entrar.
 
 - 11/10/2026: comparades les dues versions; Roger es queda amb «Diaris Nidia» (llibre obert, diversos diaris), que ja inclou la còpia de seguretat, el botó Fotos, la impressió amb historial i la importació que continua sola. La importació s'ha tret del menú.
+
+## Bústia de problemes (13/10/2026)
+
+- Botó **«Algun problema?»** (a baix a la dreta) i **Més… → Explica'ns un problema**: la Nidia explica el problema amb detall i pot afegir captures.
+- Es desa com a Google Docs «Problema per a Claude · data · nom» dins la carpeta **Bústia de problemes** del diari (les captures al costat).
+- Una rutina de Claude mira la carpeta cada hora (8–23 h), obre un fil nou al projecte per a cada problema, prepara l'arreglo i espera que el Roger el validi abans de publicar.

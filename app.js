@@ -1021,6 +1021,7 @@ function openMenu() {
     <button class="btn" data-act="share">Comparteix el diari amb algú</button>
     <button class="btn" data-act="refresh">Actualitza (veure els canvis de l'altre)</button>
     <button class="btn" data-act="install">Posa-la a la pantalla del mòbil</button>
+    <button class="btn" data-act="bustia">Explica'ns un problema</button>
     <button class="btn" data-act="logout">Surt</button></div>
     <div class="actions"><button class="btn" data-act="close">Tanca</button></div>`);
 }
@@ -1127,6 +1128,69 @@ async function finishPrint(ok) {
   closeCard(); render();
 }
 
+/* ================= bústia de problemes =================
+   Nidia explains a problem; it is saved as a Google Doc in «Bústia de problemes» (inside the diary folder).
+   A Claude routine reads new docs from there and prepares a fix that Roger validates before publishing. */
+const BX_FOLDER = 'Bústia de problemes', BX_PREFIX = 'Problema per a Claude';
+const BX_KINDS = ['Alguna cosa no funciona', 'Alguna cosa es veu malament', 'Una idea o millora', 'Una altra cosa'];
+let bxShots = [];
+function openBustia() {
+  bxShots.forEach(x => URL.revokeObjectURL(x.url)); bxShots = [];
+  const d = JSON.parse(ls.get('diari.bxdraft') || 'null') || {};
+  openCard(`<h3>Explica'ns un problema</h3>
+    <p>Si alguna cosa no va bé o voldries que l'app fes alguna cosa diferent, explica-ho aquí <b>amb tot el detall que puguis</b>. Així Claude ho podrà arreglar, i en Roger ho revisarà abans que canviï res.</p>
+    <div class="fld"><label for="bx-kind">Què és?</label><select id="bx-kind">${BX_KINDS.map(k => `<option${k === d.kind ? ' selected' : ''}>${esc(k)}</option>`).join('')}</select></div>
+    <div class="fld"><label for="bx-text">Explica-ho amb detall</label>
+      <p class="hint">Què volies fer? Què has tocat? Què esperaves que passés i què ha passat? Passa sempre o només a vegades? Si és en una entrada concreta, digues quin dia.</p>
+      <textarea id="bx-text" placeholder="Per exemple: «Volia afegir 3 fotos a l'entrada del 5 d'octubre des del mòbil. He tocat + Afegeix fotos, les he triat i després de Desa només n'hi surt una.»">${esc(d.text || '')}</textarea></div>
+    <div class="fld"><label>Captures de pantalla (opcional)</label><p class="hint">Si pots, afegeix una foto de la pantalla on es veu el problema.</p>
+      <div class="thumbs" id="bx-shots"></div><input class="hid" type="file" id="bx-files" accept="image/*" multiple></div>
+    <div class="actions"><button class="btn" data-act="close">Cancel·la</button><button class="btn primary" data-act="bxsend">Envia</button></div>`);
+  const keep = () => ls.set('diari.bxdraft', JSON.stringify({ kind: $('#bx-kind').value, text: $('#bx-text').value }));
+  $('#bx-text').oninput = keep; $('#bx-kind').onchange = keep;
+  $('#bx-files').onchange = async ev => {
+    const files = [...ev.target.files]; ev.target.value = '';
+    for (const f of files) { const r = await shrinkFile(f); if (r) bxShots.push({ blob: r.blob, url: URL.createObjectURL(r.blob) }) }
+    drawShots();
+  };
+  drawShots();
+}
+function drawShots() {
+  const el = $('#bx-shots'); if (!el) return;
+  el.innerHTML = bxShots.map((x, i) => `<div class="thumb"><div class="th-img"><img src="${x.url}" alt="Captura ${i + 1}"><button type="button" class="th-rm" data-act="bxrm" data-i="${i}" aria-label="Treu la captura ${i + 1}">✕</button></div></div>`).join('')
+    + `<button class="add-ph" type="button" onclick="document.getElementById('bx-files').click()">+ Afegeix una captura</button>`;
+}
+async function sendBustia() {
+  const kind = $('#bx-kind').value, text = $('#bx-text').value.trim();
+  if (text.length < 40) { toast('Explica-ho una mica més, amb detall: què volies fer i què ha passat.', 4500); $('#bx-text').focus(); return }
+  ensureToken(600);
+  busy('Enviant', 'Un moment…');
+  const f = await list(`'${folderId}' in parents and name='${qName(BX_FOLDER)}' and mimeType='${FOLDER_MIME}' and trashed=false`);
+  const dir = f[0] ? f[0].id : await createFolder(BX_FOLDER, folderId);
+  let who = '';
+  try { who = (await getJSON(`${DRIVE}/about?fields=user(displayName)`)).user.displayName || '' } catch (e) { if (e instanceof Redirecting) throw e }
+  const now = new Date(), stamp = now.toLocaleString('ca', { dateStyle: 'short', timeStyle: 'short' });
+  const pad = n => String(n).padStart(2, '0'), local = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const name = `${BX_PREFIX} · ${local}${who ? ' · ' + who : ''}`;
+  const at = data.entries.find(x => x.id === activeId);
+  const shots = [];
+  for (let i = 0; i < bxShots.length; i++) {
+    progress(`Pujant la captura ${i + 1} de ${bxShots.length}…`, i / bxShots.length);
+    shots.push(`${name} · captura ${i + 1}.jpg`);
+    await uploadFile({ name: shots[i], parents: [dir] }, bxShots[i].blob);
+  }
+  const doc = [`${BX_PREFIX.toUpperCase()}`, '',
+    `Enviat per: ${who || '(desconegut)'}`, `Quan: ${stamp}`, `Tipus: ${kind}`,
+    `Diari: ${data.meta.title || DEFAULT_TITLE}`, `Estava mirant: ${at ? (at.chapter ? 'capítol ' : '') + (at.title || at.date || '') : '(res en concret)'}`,
+    `Aparell: ${matchMedia('(pointer:coarse)').matches ? 'mòbil o tauleta' : 'ordinador'}, pantalla ${innerWidth}×${innerHeight}`, `Navegador: ${navigator.userAgent}`,
+    '', '— El que explica —', '', text, '',
+    shots.length ? `Captures (a la mateixa carpeta): ${shots.join(', ')}` : 'Sense captures.'].join('\n');
+  await uploadFile({ name, mimeType: 'application/vnd.google-apps.document', parents: [dir] }, new Blob([doc], { type: 'text/plain' }));
+  ls.del('diari.bxdraft'); bxShots.forEach(x => URL.revokeObjectURL(x.url)); bxShots = [];
+  openCard(`<h3>Enviat, gràcies!</h3><p>Claude ho llegirà i prepararà com arreglar-ho. En Roger ho revisarà i, quan li sembli bé, sortirà a l'app.</p>
+    <div class="actions"><button class="btn primary" data-act="close">D'acord</button></div>`);
+}
+
 /* ================= events ================= */
 $('#b-new').onclick = () => openEditor(null);
 $('#b-more').onclick = openMenu;
@@ -1181,6 +1245,9 @@ document.addEventListener('click', async ev => {
     }
     else if (a === 'refresh') { busy('Actualitzant'); data = await readData(); closeCard(); render() }
     else if (a === 'install') openInstall();
+    else if (a === 'bustia') openBustia();
+    else if (a === 'bxrm') { URL.revokeObjectURL(bxShots[+b.dataset.i].url); bxShots.splice(+b.dataset.i, 1); drawShots() }
+    else if (a === 'bxsend') { try { await sendBustia() } catch (err) { fail(err, 'enviar el problema') } }
     else if (a === 'logout') logout();
     else if (a === 'diaris') await openDiaries();
     else if (a === 'opendiari') await switchDiari(b.dataset.id);
