@@ -482,9 +482,26 @@ function placeOf(entries, e) {
   for (let i = ci + 1; i < end; i++) { const kk = dateKey(entries[i].date); if (kk && kk <= k) at = i + 1 }
   return at;
 }
-function placeEntry(entries, e, fallback) {
+/* each year is a chapter: when an entry's year has none yet, make it (named like the latest year's chapter),
+   between the earlier and the later years; returns the new chapter */
+function yearChapter(entries, e) {
+  const y = Math.floor(dateKey(e.date) / 1e4); if (!y) return null;
+  const chs = entries.map((x, i) => x.chapter ? i : -1).filter(i => i >= 0), yrs = chs.filter(i => yearOf(entries[i].title));
+  if (yrs.some(i => yearOf(entries[i].title) === y)) return null;
+  const last = yrs.reduce((a, i) => a == null || yearOf(entries[i].title) > yearOf(entries[a].title) ? i : a, null);
+  const title = last == null ? String(y) : entries[last].title.replace(/\b(19|20)\d{2}\b/, y);
+  const later = yrs.find(i => yearOf(entries[i].title) > y), before = yrs.filter(i => yearOf(entries[i].title) < y).pop();
+  const at = later != null ? later : before != null ? (chs.find(i => i > before) ?? entries.length) : entries.length;
+  const ch = { id: uid(), chapter: true, date: '', title, paras: [], photos: [], variant: 0, mt: Date.now() };
+  entries.splice(at, 0, ch);
+  return ch;
+}
+function placeEntry(entries, e, fallback, make) {
+  const ch = make ? yearChapter(entries, e) : null;
+  if (ch && fallback > entries.indexOf(ch)) fallback++;
   const at = placeOf(entries, e);
   entries.splice(at < 0 ? Math.min(fallback, entries.length) : at, 0, e);
+  return ch;
 }
 
 function renderNav() {
@@ -863,12 +880,13 @@ function saveDraft() {
   if (!edit || !$('#f-text')) return;
   ls.set('diari.draft', JSON.stringify({ id: edit.id, date: ($('#f-date') || {}).value || '', title: $('#f-title').value, text: $('#f-text').value }));
 }
-function editorHTML(e, draft) {
+function editorHTML(e, draft, cover) {
   const date = draft ? draft.date : e ? e.date : fmtDate(new Date().toISOString().slice(0, 10));
   const title = draft ? draft.title : e ? e.title : '';
   const text = draft ? draft.text : e ? e.paras.join('\n\n') : '';
   const idx = e ? data.entries.indexOf(e) : -1;
-  return `<h3>${e ? (e.chapter ? 'Edita el capítol' : "Edita l'entrada") : 'Nova entrada'}</h3>
+  return `<h3>${cover ? `Any nou: ${esc(e.title)}` : e ? (e.chapter ? 'Edita el capítol' : "Edita l'entrada") : 'Nova entrada'}</h3>
+  ${cover ? `<p>L'entrada s'ha desat. És la primera d'aquest any, així que he començat el capítol «${esc(e.title)}». Tria una foto de portada per al capítol (i, si vols, unes línies).</p>` : ''}
   ${e && e.chapter ? '' : `<div class="row"><div class="fld"><label for="f-date">Data</label><input type="text" id="f-date" value="${esc(date)}"></div>
     <div class="fld" style="flex:0 1 170px"><label for="f-pick">Tria al calendari</label><input type="date" id="f-pick"></div></div>`}
   <div class="fld"><label for="f-title">${e && e.chapter ? 'Títol del capítol' : 'Títol (opcional)'}</label><input type="text" id="f-title" value="${esc(title)}"></div>
@@ -890,10 +908,10 @@ function drawThumbs() {
     + `<button class="add-ph" data-act="addph" type="button">+ Afegeix fotos</button>`;
   $('#thumbs').querySelectorAll('img[data-tpid]').forEach(img => { const id = img.dataset.tpid; if (id && !img.getAttribute('src')) photoURL(id).then(u => img.src = u).catch(() => {}) });
 }
-function openEditor(e, draft) {
+function openEditor(e, draft, cover) {
   try { ensureToken(1500) } catch (err) { return }
   edit = { id: e ? e.id : null, photos: e ? (e.photos || []).map(p => ({ ...p })) : [], removed: [] };
-  openCard(editorHTML(e, draft)); drawThumbs();
+  openCard(editorHTML(e, draft, cover)); drawThumbs();
   const pick = $('#f-pick'); if (pick) pick.onchange = ev => { if (ev.target.value) $('#f-date').value = fmtDate(ev.target.value) };
   const addFiles = async files => {
     let bad = 0;
@@ -924,17 +942,20 @@ async function saveEditor() {
     }
     progress('Desant al Drive…');
     const sid = ed.id || uid();
+    let newCh = null;
     await mutate(d => {
       const x = ed.id && d.entries.find(y => y.id === ed.id);
       if (x) {
         const moved = !x.chapter && fields.date !== x.date;
         Object.assign(x, fields, { photos: ph });
-        if (moved && placeOf(d.entries, x) >= 0) { const i = d.entries.indexOf(x); d.entries.splice(i, 1); placeEntry(d.entries, x, i) }
+        if (moved && dateKey(x.date)) { const i = d.entries.indexOf(x); d.entries.splice(i, 1); newCh = placeEntry(d.entries, x, i, true) }
       }
-      else { const ne = { id: sid, variant: d.entries.length % 2, chapter: !!(chEl && chEl.checked), ...fields, photos: ph }; ne.chapter ? d.entries.push(ne) : placeEntry(d.entries, ne, d.entries.length) }
+      else { const ne = { id: sid, variant: d.entries.length % 2, chapter: !!(chEl && chEl.checked), ...fields, photos: ph }; if (ne.chapter) d.entries.push(ne); else newCh = placeEntry(d.entries, ne, d.entries.length, true) }
     });
     for (const id of ed.removed) await trashFile(id);
-    ls.del('diari.draft'); closeCard(); render(); toast('Desat');
+    ls.del('diari.draft'); closeCard(); render();
+    const ch = newCh && data.entries.find(y => y.id === newCh.id);
+    if (ch) openEditor(ch, null, true); else toast('Desat');
     backupPending(false);
   } catch (err) { fail(err, 'desar') }
 }
