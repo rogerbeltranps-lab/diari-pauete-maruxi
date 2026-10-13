@@ -458,6 +458,35 @@ function showScreen(html) {
 }
 /* chapter picker: newest year first; chapters without a year (photo albums…) after them, in book order */
 const yearOf = t => Math.max(0, ...(String(t).match(/\b(19|20)\d{2}\b/g) || []).map(Number));
+/* "13/10/2026", "dilluns, 13 d’octubre de 2026", "14 de mayo 1983" → 20261013 (0 when there is no year) */
+const MON_N = { gener: 1, enero: 1, febrer: 2, febrero: 2, 'març': 3, marc: 3, marzo: 3, abril: 4, maig: 5, mayo: 5, juny: 6, junio: 6, juliol: 7, julio: 7, agost: 8, agosto: 8, setembre: 9, septiembre: 9, setiembre: 9, octubre: 10, novembre: 11, noviembre: 11, desembre: 12, diciembre: 12 };
+const reMonN = new RegExp('(?:(\\d{1,2})\\s*(?:de\\s+|d[\'’]\\s*|del\\s+)?)?(?<![a-zà-ü])(' + Object.keys(MON_N).join('|') + ')(?![a-zà-ü])');
+function dateKey(t) {
+  t = String(t || '').toLowerCase();
+  const n = t.match(/\b(\d{1,2})\s*[\/.\-]\s*(\d{1,2})\s*[\/.\-]\s*(\d{4})\b/) || t.match(/\b(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{2})\b/);
+  if (n) return (+n[3] < 100 ? 2000 + +n[3] : +n[3]) * 1e4 + Math.min(12, +n[2]) * 100 + +n[1];
+  const y = t.match(reYear); if (!y) return 0;
+  const m = t.match(reMonN);
+  return +y[0] * 1e4 + (m ? MON_N[m[2]] * 100 + (+m[1] || 0) : 0);
+}
+/* where a dated entry belongs: in the chapter of its year (or, if that year has none yet, at the end of the
+   latest earlier year), after the entries dated on or before it; -1 when it can't tell */
+function placeOf(entries, e) {
+  const k = dateKey(e.date); if (!k) return -1;
+  const y = Math.floor(k / 1e4), chs = entries.map((x, i) => x.chapter ? i : -1).filter(i => i >= 0);
+  let ci = chs.find(i => yearOf(entries[i].title) === y);
+  if (ci == null) ci = chs.filter(i => yearOf(entries[i].title) && yearOf(entries[i].title) < y).pop();
+  if (ci == null) return -1;
+  const end = chs.find(i => i > ci) ?? entries.length;
+  let at = ci + 1;
+  for (let i = ci + 1; i < end; i++) { const kk = dateKey(entries[i].date); if (kk && kk <= k) at = i + 1 }
+  return at;
+}
+function placeEntry(entries, e, fallback) {
+  const at = placeOf(entries, e);
+  entries.splice(at < 0 ? Math.min(fallback, entries.length) : at, 0, e);
+}
+
 function renderNav() {
   const gs = groupsOf(data.entries), nav = $('#nav');
   if (group !== 'all' && !gs.some(g => g.key === group)) group = 'all';
@@ -897,8 +926,12 @@ async function saveEditor() {
     const sid = ed.id || uid();
     await mutate(d => {
       const x = ed.id && d.entries.find(y => y.id === ed.id);
-      if (x) Object.assign(x, fields, { photos: ph });
-      else d.entries.push({ id: sid, variant: d.entries.length % 2, chapter: !!(chEl && chEl.checked), ...fields, photos: ph });
+      if (x) {
+        const moved = !x.chapter && fields.date !== x.date;
+        Object.assign(x, fields, { photos: ph });
+        if (moved && placeOf(d.entries, x) >= 0) { const i = d.entries.indexOf(x); d.entries.splice(i, 1); placeEntry(d.entries, x, i) }
+      }
+      else { const ne = { id: sid, variant: d.entries.length % 2, chapter: !!(chEl && chEl.checked), ...fields, photos: ph }; ne.chapter ? d.entries.push(ne) : placeEntry(d.entries, ne, d.entries.length) }
     });
     for (const id of ed.removed) await trashFile(id);
     ls.del('diari.draft'); closeCard(); render(); toast('Desat');
@@ -1289,6 +1322,17 @@ async function fixFotosPapis() {
   } catch (err) { console.error(err) }
 }
 
+/* entries written in the app used to land at the end of the book, inside the last chapter (a photo album with
+   no year); move the ones made in the app (no import source) back to their year */
+async function fixStranded() {
+  const stranded = d => { let ch = null; return d.entries.filter(e => { if (e.chapter) { ch = e; return false } return ch && !yearOf(ch.title) && !e.src && e.mt && placeOf(d.entries, e) >= 0 }) };
+  if (!stranded(data).length) return;
+  try {
+    await mutate(d => stranded(d).forEach(e => { const i = d.entries.indexOf(e); d.entries.splice(i, 1); placeEntry(d.entries, e, i) }));
+    render();
+  } catch (err) { console.error(err) }
+}
+
 async function boot() {
   if (!CFG.clientId) { setupScreen(); return }
   const h = readHash();
@@ -1313,6 +1357,7 @@ async function boot() {
     data = await readData();
     render();
     await fixFotosPapis();
+    await fixStranded();
     const rs = JSON.parse(ls.get('diari.resume') || 'null');
     if (rs) { ls.del('diari.resume'); const imp = (data.meta && data.meta.imported) || {}; const tabs = rs.tabs.filter(t => !imp[rs.doc + ':' + t]); if (tabs.length) { doDocImport(rs.doc, tabs); return } }
     setTimeout(() => backupPending(false), 4000);
