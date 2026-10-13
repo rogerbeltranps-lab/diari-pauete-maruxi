@@ -250,7 +250,10 @@ function blocksToEntries(blocks, tabTitle) {
       else if (hasDates ? isDateLine(one) : b.heading) start(one);
       else if (isChapter(one) && (one === one.toUpperCase() || b.bold || b.heading)) { start(''); cur.title = one === one.toUpperCase() ? one.charAt(0) + one.slice(1).toLowerCase() : one }
       else if (b.heading && cur && !cur.title && !cur.paras.length) cur.title = one;
-      else { if (!cur) start(''); cur.paras.push(t) }
+      else {
+        if (!cur || (!cur.date && cur.imgs.length)) { start(''); cur.piece = true }
+        cur.paras.push(t);
+      }
     }
     if (b.imgs && b.imgs.length) { if (!cur) start(''); cur.imgs.push(...b.imgs) }
   }
@@ -453,11 +456,15 @@ const listEl = $('#list');
 function showScreen(html) {
   const s = $('#s-loading'); s.innerHTML = html; s.hidden = false; $('#layout').hidden = true;
 }
+/* chapter picker: newest year first; chapters without a year (photo albums…) after them, in book order */
+const yearOf = t => Math.max(0, ...(String(t).match(/\b(19|20)\d{2}\b/g) || []).map(Number));
 function renderNav() {
   const gs = groupsOf(data.entries), nav = $('#nav');
   if (group !== 'all' && !gs.some(g => g.key === group)) group = 'all';
-  const item = (key, title) => `<button class="nav-i${group === key ? ' on' : ''}" type="button" data-act="group" data-g="${esc(key)}"${group === key ? ' aria-current="true"' : ''}>${esc(title)}</button>`;
-  nav.innerHTML = item('all', 'Tot el llibre') + (gs.length > 1 ? gs.map(g => item(g.key, g.title)).join('') : '');
+  const sorted = gs.map((g, i) => ({ g, i, y: g.key === 'inici' ? -1 : yearOf(g.title) })).sort((a, b) => b.y - a.y || a.i - b.i).map(x => x.g);
+  const opt = (key, title) => `<option value="${esc(key)}"${group === key ? ' selected' : ''}>${esc(title)}</option>`;
+  nav.innerHTML = `<label class="chap"><span class="vh">Capítol</span><select id="f-chap">${opt('all', 'Tot el llibre')}${gs.length > 1 ? sorted.map(g => opt(g.key, g.title)).join('') : ''}</select></label>`;
+  $('#f-chap').onchange = ev => { group = ev.target.value; ls.set('diari.group', group); $('#f-search').value = ''; render(); window.scrollTo(0, 0) };
 }
 /* entry list (middle column): click jumps to the entry's page */
 const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -472,7 +479,7 @@ function renderList() {
       const pg = pageNo.has(e.id) ? `<span class="li-p">${pageNo.get(e.id)}</span>` : '';
       if (e.chapter) return `<button class="li-ch" type="button" data-act="goto" data-id="${e.id}"><span>${esc(e.title || 'Capítol')}</span>${pg}</button>`;
       return `<button class="li" type="button" data-act="goto" data-id="${e.id}">
-        <span class="li-row"><span class="li-h">${esc(e.title || e.date || 'Sense títol')}</span><span class="li-dots"></span>${pg}</span>
+        <span class="li-row"><span class="li-h">${esc(e.title || e.date || ((e.paras || [])[0] || '').slice(0, 60) || 'Sense títol')}</span><span class="li-dots"></span>${pg}</span>
         ${e.title && e.date ? `<span class="li-d">${esc(e.date)}</span>` : ''}</button>`;
     }).join('') : `<p class="muted li-none">${q ? 'No hi ha cap entrada amb aquestes paraules.' : 'Encara no hi ha entrades.'}</p>`);
   listEl.querySelectorAll('img[data-pid]').forEach(img => { if (mem.has(img.dataset.pid)) loadImg(img); else io.observe(img) });
@@ -537,7 +544,7 @@ function fitText() {
 let toastT; function toast(m, ms = 3200) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, ms) }
 const ov = $('#ov'), card = $('#card');
 function openCard(html, lock) { card.innerHTML = html; ov.hidden = false; if (lock) ov.dataset.lock = '1'; else delete ov.dataset.lock; const f = card.querySelector('input,textarea,button'); f && f.focus({ preventScroll: true }) }
-function closeCard() { ov.hidden = true; card.innerHTML = ''; delete ov.dataset.lock; edit = null }
+function closeCard() { ov.hidden = true; card.innerHTML = ''; card.ondragover = card.ondragleave = card.ondrop = null; delete ov.dataset.lock; edit = null }
 function busy(title, msg) { openCard(`<h3>${esc(title)}</h3><p id="pmsg">${esc(msg || '')}</p><div class="prog"><i id="pbar"></i></div>`, true) }
 function progress(msg, frac) { const m = $('#pmsg'), b = $('#pbar'); if (m) m.textContent = msg; if (b && frac != null) b.style.width = Math.round(frac * 100) + '%' }
 ov.addEventListener('click', e => { if (e.target === ov && !ov.dataset.lock) closeCard() });
@@ -590,7 +597,9 @@ async function runImport(groupsList, resolveImg, resumeInfo) {
       const flush = async (last, upto) => {
         const b = out; out = [];
         await mutate(d => {
-          d.entries.push(...b);
+          const last = g.key ? d.entries.map(e => e.src).lastIndexOf(g.key) : -1;
+          const at = last >= 0 ? last + 1 : g.before ? d.entries.findIndex(e => e.id === g.before) : -1;
+          if (at >= 0) d.entries.splice(at, 0, ...b); else d.entries.push(...b);
           if (g.key) {
             d.meta.importProgress = d.meta.importProgress || {};
             if (last) { delete d.meta.importProgress[g.key]; d.meta.imported = d.meta.imported || {}; d.meta.imported[g.key] = Date.now() }
@@ -622,7 +631,7 @@ async function runImport(groupsList, resolveImg, resumeInfo) {
         };
         await Promise.all(Array.from({ length: 6 }, worker));
         block.forEach((pe, bi) => {
-          out.push({ id: uid(), src: g.key || undefined, chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: slots[bi].filter(Boolean), variant: (i + bi) % 2 });
+          out.push({ id: uid(), src: g.key || undefined, chapter: pe.chapter, date: pe.date, title: pe.title, paras: pe.paras, photos: slots[bi].filter(Boolean), variant: pe.piece ? 0 : (i + bi) % 2 });
           pe.chapter ? nCh++ : nEn++;
         });
         const upto = i + block.length, last = upto >= g.entries.length;
@@ -689,6 +698,7 @@ async function doDocImport(id, tabsOverride) {
     const orig = await loadOriginals();
     const groupsList = doc.tabs.filter(t => tabIds.includes(t.id)).map(t => ({ key: id + ':' + t.id, label: t.title || 'Pestanya', entries: blocksToEntries(tabBlocks(t), t.title) }));
     const again = groupsList.filter(g => data.meta.imported && data.meta.imported[g.key]).map(g => g.key);
+    for (const g of groupsList) { const i = data.entries.map(e => e.src).lastIndexOf(g.key), nx = i >= 0 && data.entries.slice(i + 1).find(e => e.src !== g.key); if (nx) g.before = nx.id }
     if (again.length) await mutate(d => { d.entries = d.entries.filter(e => !again.includes(e.src)); again.forEach(k => { delete d.meta.imported[k]; if (d.meta.importProgress) delete d.meta.importProgress[k] }) });
     await runImport(groupsList, async img => (await originalImage(orig, img)) || docImage(id, img), { doc: id, tabs: tabIds });
   } catch (err) { fail(err, 'importar el diari') }
@@ -816,8 +826,10 @@ function editorHTML(e, draft) {
     <div class="fld" style="flex:0 1 170px"><label for="f-pick">Tria al calendari</label><input type="date" id="f-pick"></div></div>`}
   <div class="fld"><label for="f-title">${e && e.chapter ? 'Títol del capítol' : 'Títol (opcional)'}</label><input type="text" id="f-title" value="${esc(title)}"></div>
   <div class="fld"><label for="f-text">${e && e.chapter ? 'Text (opcional)' : 'El que ha passat'}</label><textarea id="f-text" placeholder="Escriu aquí. Deixa una línia en blanc per començar un paràgraf nou.">${esc(text)}</textarea></div>
-  <div class="fld"><label>Fotos</label><p class="hint">Toca «Gran» per fer una foto més petita al llibre. Amb ‹ › canvies l'ordre.</p><div class="thumbs" id="thumbs"></div><input class="hid" type="file" id="f-photos" accept="image/*" multiple></div>
+  <div class="fld"><label>Fotos</label><p class="hint">Toca «Gran» per fer una foto més petita al llibre. Amb ‹ › canvies l'ordre.</p><div class="thumbs" id="thumbs"></div><input class="hid" type="file" id="f-photos" accept="image/*" multiple>
+    <div class="gphotos"><a class="btn" href="https://photos.google.com/" target="_blank" rel="noopener">Obre Google Fotos</a><p class="hint">A l'ordinador: a Google Fotos tria les fotos i baixa-les (tecles Maj+D). Després prem «+ Afegeix fotos» i busca-les a <b>Baixades</b>, o arrossega-les fins aquí.</p></div></div>
   ${e ? '' : `<label class="chk"><input type="checkbox" id="f-chapter"> És l'inici d'un capítol nou (per exemple, un any)</label>`}
+  ${e && e.chapter && /^[\w-]{20,}:/.test(e.src || '') ? `<div class="fld"><label>Google Docs</label><p class="hint">Si aquest capítol s'ha importat malament (per exemple, les fotos separades del text), es pot tornar a importar de la pestanya «${esc(e.title)}». Substitueix totes les entrades del capítol que venen del Google Docs.</p><div class="row"><button class="btn" data-act="reimport" data-id="${e.id}">Torna a importar aquest capítol</button></div></div>` : ''}
   <div class="actions"><div class="left">${e ? `<button class="btn danger" data-act="del">Esborra</button>${idx > 0 ? `<button class="btn" data-act="merge">Uneix amb l'anterior</button>` : ''}` : ''}</div>
     <button class="btn" data-act="close">Cancel·la</button><button class="btn primary" data-act="save">Desa</button></div>`;
 }
@@ -836,11 +848,17 @@ function openEditor(e, draft) {
   edit = { id: e ? e.id : null, photos: e ? (e.photos || []).map(p => ({ ...p })) : [], removed: [] };
   openCard(editorHTML(e, draft)); drawThumbs();
   const pick = $('#f-pick'); if (pick) pick.onchange = ev => { if (ev.target.value) $('#f-date').value = fmtDate(ev.target.value) };
-  $('#f-photos').onchange = async ev => {
-    const files = [...ev.target.files]; ev.target.value = ''; let bad = 0;
+  const addFiles = async files => {
+    let bad = 0;
     for (const f of files) { const r = await shrinkFile(f); if (r) { edit.photos.push({ tmp: true, ...r, url: URL.createObjectURL(r.blob) }); drawThumbs() } else bad++ }
     if (bad) toast(`${bad} foto(s) no s'han pogut obrir. Prova-les en format JPG.`);
   };
+  $('#f-photos').onchange = ev => { const files = [...ev.target.files]; ev.target.value = ''; addFiles(files) };
+  /* computer: photos can also be dragged in from the Downloads folder */
+  const hi = on => { const t = $('#thumbs'); if (t) t.classList.toggle('drop', on) };
+  card.ondragover = ev => { if ([...ev.dataTransfer.types].includes('Files')) { ev.preventDefault(); hi(true) } };
+  card.ondragleave = ev => { if (!card.contains(ev.relatedTarget)) hi(false) };
+  card.ondrop = ev => { ev.preventDefault(); hi(false); if (edit) addFiles([...ev.dataTransfer.files].filter(f => /^image\//.test(f.type) || /\.(heic|heif)$/i.test(f.name))) };
 }
 async function saveEditor() {
   const paras = $('#f-text').value.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
@@ -1106,7 +1124,6 @@ document.addEventListener('click', async ev => {
   try {
     if (a === 'close') closeCard();
     else if (a === 'login') login();
-    else if (a === 'group') { group = b.dataset.g; ls.set('diari.group', group); $('#f-search').value = ''; render(); window.scrollTo(0, 0) }
     else if (a === 'goto') gotoEntry(b.dataset.id);
     else if (a === 'new') { closeCard(); openEditor(null) }
     else if (a === 'import') { closeCard(); $('#f-docx').click() }
@@ -1165,6 +1182,10 @@ document.addEventListener('click', async ev => {
     else if (a === 'left' || a === 'right') { const i = +b.dataset.i, j = a === 'left' ? i - 1 : i + 1; if (j < 0 || j >= edit.photos.length) return; [edit.photos[j], edit.photos[i]] = [edit.photos[i], edit.photos[j]]; drawThumbs() }
     else if (a === 'size') { const p = edit.photos[+b.dataset.i], s = NEXT_SIZE[p.s || 'g']; if (s === 'g') delete p.s; else p.s = s; drawThumbs() }
     else if (a === 'save') saveEditor();
+    else if (a === 'reimport' && e) {
+      if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = `Segur? Es tornaran a importar ${data.entries.filter(x => x.src === e.src).length} entrades. Torna a prémer`; return }
+      const [doc, tab] = e.src.split(':'); closeCard(); doDocImport(doc, [tab]);
+    }
     else if (a === 'del') {
       if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'Segur? Torna a prémer'; return }
       const ed = edit; const old = data.entries.find(x => x.id === ed.id);
