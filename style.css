@@ -260,3 +260,10 @@ a.btn{color:var(--ink)}
 .gphotos .hint{flex:1 1 260px}
 @media (hover:none),(pointer:coarse){.gphotos{display:none}}
 .thumbs.drop{outline:2px dashed var(--accent);outline-offset:6px;border-radius:8px}
+
+/* ---- whole photos (default): fitPhotos() sizes every photo to its own shape, in the rows that fill the space best ---- */
+.ph.adj{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3mm}
+.p-entry .ph.adj{justify-content:flex-start}
+.p-entry.v1 .ph.adj{justify-content:flex-end}
+.ph-row{display:flex;gap:3mm;justify-content:center}
+.ph.adj figure{flex:none}

@@ -423,7 +423,7 @@ function gridHTML(P, variant) {
   } else areas = '"a b" "c d"';
   const ncols = areas.split('"')[1].split(' ').length;
   const st = `grid-template-areas:${areas};grid-template-columns:${cols || `repeat(${ncols},1fr)`};${rows ? `grid-template-rows:${rows};` : ''}`;
-  return `<div class="ph" style='${st}'>${P.map((p, i) => `<figure style="grid-area:${'abcd'[i]}"${p.s ? ` class="s-${p.s}"` : ''}>${imgTag(p)}</figure>`).join('')}</div>`;
+  return `<div class="ph" style='${st}'>${P.map((p, i) => `<figure style="grid-area:${'abcd'[i]}" data-r="${(p.w && p.h) ? (p.w / p.h).toFixed(3) : 1}"${p.s ? ` class="s-${p.s}"` : ''}>${imgTag(p)}</figure>`).join('')}</div>`;
 }
 function pageHTML(p, num, ents) {
   if (p.kind === 'cover') {
@@ -436,7 +436,7 @@ function pageHTML(p, num, ents) {
       ${range ? `<div class="range">${esc(range)}</div>` : ''}</div>`;
   }
   const e = p.e, v = e.variant || 0, side = num % 2 ? 'verso' : 'recto', lay = e.lay || {};
-  const lc = ` sz-${lay.size || 'm'}${lay.fit === 'contain' ? ' fit-contain' : ''}`;
+  const lc = ` sz-${lay.size || 'm'}${lay.fit ? ' fit-' + lay.fit : ''}`;
   const pn = `<div class="pn">${num}</div>`, run = !e.chapter && chOf.get(e.id) ? `<div class="run">${esc(chOf.get(e.id))}</div>` : '';
   const txt = l => `<div class="txt">${l.map(t => `<p>${esc(t)}</p>`).join('')}</div>`;
   if (p.kind === 'chapter') {
@@ -528,9 +528,27 @@ function render() {
       p.first ? `<button data-act="layout" data-id="${p.e.id}">Fotos</button><button data-act="edit" data-id="${p.e.id}">Edita</button>` : '';
     return `<div class="sheet ${p.kind === 'cover' ? 'cover' : ''}"${p.first ? ` data-eid="${p.e.id}"` : ''}><div class="tools">${tools}</div>${pageHTML(p, i, ents)}</div>`;
   }).join('');
-  scale(); fitText(); renderList();
+  scale(); fitText(); renderList(); fitPhotos();
   book.querySelectorAll('.sheet[data-eid]').forEach(s => seen.observe(s));
   book.querySelectorAll('img[data-pid]').forEach(img => { if (mem.has(img.dataset.pid)) loadImg(img); else io.observe(img) });
+}
+/* whole photos, no cropping: try every way of putting the photos in rows, keep the one that fills the box the most */
+function rowsOf(n) { if (!n) return [[]]; const out = []; for (let k = 1; k <= n; k++) for (const r of rowsOf(n - k)) out.push([k, ...r]); return out }
+function fitPhotos() {
+  (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => book.querySelectorAll('.page:not(.fit-cover):not(.fit-contain) .ph').forEach(ph => {
+    const figs = [...ph.querySelectorAll('figure')], r = figs.map(f => +f.dataset.r || 1);
+    const W = ph.clientWidth, H = ph.clientHeight, gap = 3 * 96 / 25.4; if (!W || !H) return;
+    let best = null;
+    for (const rows of rowsOf(figs.length)) {
+      let i = 0; const hs = rows.map(k => { const rr = r.slice(i, i += k); return (W - gap * (k - 1)) / rr.reduce((a, b) => a + b, 0) });
+      const s = Math.min(1, (H - gap * (rows.length - 1)) / hs.reduce((a, b) => a + b, 0));
+      let area = 0; i = 0; rows.forEach((k, j) => { for (let q = 0; q < k; q++) area += (s * hs[j]) ** 2 * r[i++] });
+      if (!best || area > best.area + 1) best = { rows, hs, s, area };
+    }
+    ph.classList.add('adj'); ph.removeAttribute('style'); let i = 0;
+    ph.replaceChildren(...best.rows.map((k, j) => { const row = document.createElement('div'); row.className = 'ph-row';
+      for (let q = 0; q < k; q++, i++) { const f = figs[i]; f.style.cssText = `width:${best.s * best.hs[j] * r[i]}px;height:${best.s * best.hs[j]}px`; row.append(f) } return row }));
+  }));
 }
 function scale() { const s = book.querySelector('.sheet'); if (s) book.style.setProperty('--s', s.clientWidth / (210 * 96 / 25.4)) }
 new ResizeObserver(scale).observe(book);
@@ -969,7 +987,7 @@ function openLayout(e) {
     <div class="fld"><label>Mida de les fotos</label>${seg('size', l.size || 'm', [['s', 'Petites'], ['m', 'Mitjanes'], ['l', 'Grans']])}</div>
     <div class="fld"><label>Fotos a la primera pàgina (amb el text)</label>${seg('first', l.first == null ? 'auto' : l.first, [['auto', 'Auto'], ...[0, 1, 2, 3, 4].filter(k => k <= n).map(k => [k, String(k)])])}</div>
     <div class="fld"><label>Fotos a les pàgines següents</label>${seg('per', l.per || 'auto', [['auto', 'Auto'], [1, '1'], [2, '2'], [3, '3'], [4, '4']])}</div>
-    <div class="fld"><label>Com es veuen</label>${seg('fit', l.fit || 'cover', [['cover', 'Omplen el requadre'], ['contain', 'Senceres, sense retallar']])}</div>
+    <div class="fld"><label>Com es veuen</label>${seg('fit', l.fit || 'auto', [['auto', 'Senceres'], ['cover', 'Omplen el requadre (es retallen)'], ['contain', 'Senceres, amb fons']])}</div>
     <div class="fld"><label>On van les fotos</label>${seg('variant', e.variant || 0, [[0, 'Sota el text'], [1, 'Sobre el text']])}</div>
     ${n > 1 ? `<div class="fld"><label>Ordre (la primera és la més gran)</label><div class="thumbs" id="lthumbs"></div></div>` : ''}
     <div class="actions"><button class="btn" data-act="layundo">Desfés</button><button class="btn primary" data-act="laysave">Fet</button></div>`, true);
@@ -1247,6 +1265,30 @@ function loginScreen(msg) {
     ${msg ? `<p class="muted">${esc(msg)}</p>` : ''}
     <button class="btn primary big" data-act="login">Entra amb Google</button>`);
 }
+/* one-off (13/10/2026): «Fotos Papis» was imported before undated sections were split, so all its texts
+   ended up on the first page and the photos after them; give each text its own photo, in the doc's order */
+const FP_ID = 'nwi4pdiumv3x3hvq';
+const FP_SPLIT = [[2, 1], ...Array(7).fill([1, 1]), [2, 1], ...Array(9).fill([1, 1]), [2, 1], ...Array(4).fill([1, 1])]; // [texts, photos] per page
+const fpStale = e => e && e.paras.length === 26 && (e.photos || []).length === 23;
+async function fixFotosPapis() {
+  if (!fpStale(data.entries.find(x => x.id === FP_ID))) return;
+  try {
+    await mutate(d => {
+      const i = d.entries.findIndex(x => x.id === FP_ID), e = d.entries[i];
+      if (!fpStale(e)) return;
+      const paras = e.paras, photos = e.photos, out = [];
+      let a = 0, b = 0;
+      FP_SPLIT.forEach(([np, nf], k) => {
+        const ps = paras.slice(a, a += np), fs = photos.slice(b, b += nf);
+        if (!k) { e.paras = ps; e.photos = fs; return }
+        out.push({ id: uid(), src: e.src, chapter: false, date: '', title: '', paras: ps, photos: fs, variant: 0 });
+      });
+      d.entries.splice(i + 1, 0, ...out);
+    });
+    render();
+  } catch (err) { console.error(err) }
+}
+
 async function boot() {
   if (!CFG.clientId) { setupScreen(); return }
   const h = readHash();
@@ -1270,6 +1312,7 @@ async function boot() {
     }
     data = await readData();
     render();
+    await fixFotosPapis();
     const rs = JSON.parse(ls.get('diari.resume') || 'null');
     if (rs) { ls.del('diari.resume'); const imp = (data.meta && data.meta.imported) || {}; const tabs = rs.tabs.filter(t => !imp[rs.doc + ':' + t]); if (tabs.length) { doDocImport(rs.doc, tabs); return } }
     setTimeout(() => backupPending(false), 4000);
