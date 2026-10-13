@@ -29,12 +29,11 @@ svg{flex:none}
 .brand{display:flex;align-items:center;gap:12px;flex:none}
 .logo{width:44px;height:44px;border-radius:50%;display:block}
 .brand-name{font-family:var(--f-display);font-size:22px;line-height:1;white-space:nowrap}
-.nav{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
-.nav::-webkit-scrollbar{display:none}
-.nav-i{border:0;background:transparent;padding:8px 12px;font-size:16px;color:var(--muted);white-space:nowrap;border-radius:8px;position:relative}
-.nav-i:hover{color:var(--ink)}
-.nav-i.on{color:var(--ink)}
-.nav-i.on::after{content:"";position:absolute;left:12px;right:12px;bottom:2px;height:2px;border-radius:2px;background:var(--clay)}
+.nav{display:flex;flex:1;min-width:0}
+.chap{position:relative;display:block;max-width:100%}
+.chap::after{content:"";position:absolute;right:15px;top:50%;width:7px;height:7px;border:solid var(--ink);border-width:0 1.8px 1.8px 0;transform:translateY(-70%) rotate(45deg);pointer-events:none}
+.chap select{appearance:none;-webkit-appearance:none;max-width:100%;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:16px;padding:8px 40px 8px 16px;border-radius:999px;text-overflow:ellipsis;cursor:pointer}
+.chap select:hover{border-color:var(--ink)}
 .bar-r{display:flex;align-items:center;gap:8px;flex:none}
 
 .btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px 15px;border-radius:999px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:7px;text-decoration:none}
@@ -225,7 +224,8 @@ a.btn{color:var(--ink)}
   .logo{width:38px;height:38px}
   .bar-r{margin-left:auto}
   .bar-r .btn:not(.primary):not(.icon){display:none}
-  .nav{order:3;flex-basis:100%;margin:0 -16px;padding:0 10px}
+  .nav{order:3;flex-basis:100%;padding:0 0 10px}
+  .chap,.chap select{width:100%}
   .layout{padding:18px 16px 50px}
 }
 @media (max-width:520px){ .bar .btn.primary span{display:none} .bar .btn.primary{padding:9px} .bar .btn.primary svg{width:20px;height:20px} }
@@ -254,3 +254,16 @@ a.btn{color:var(--ink)}
 .seg button{border:1px solid var(--line);background:var(--desk);color:var(--ink);padding:8px 12px;border-radius:999px;font-weight:500}
 .seg button.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .th-sp{flex:1}
+
+/* ---- editor: link to Google Photos (computer only; on the phone the photo picker already shows them) ---- */
+.gphotos{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.gphotos .hint{flex:1 1 260px}
+@media (hover:none),(pointer:coarse){.gphotos{display:none}}
+.thumbs.drop{outline:2px dashed var(--accent);outline-offset:6px;border-radius:8px}
+
+/* ---- whole photos (default): fitPhotos() sizes every photo to its own shape, in the rows that fill the space best ---- */
+.ph.adj{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3mm}
+.p-entry .ph.adj{justify-content:flex-start}
+.p-entry.v1 .ph.adj{justify-content:flex-end}
+.ph-row{display:flex;gap:3mm;justify-content:center}
+.ph.adj figure{flex:none}
