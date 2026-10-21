@@ -226,6 +226,16 @@ a.btn{color:var(--ink)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 
 /* ---------- smaller screens ---------- */
+/* not enough room for the chapter picker and «Anar al dia» between the name and the buttons: give them their own row */
+@media (max-width:1180px){
+  .bar-in{flex-wrap:wrap;padding-bottom:0}
+  .bar-r{margin-left:auto}
+  .nav{order:3;flex-basis:100%;padding:0 0 10px}
+  .chap{flex:1;min-width:0;max-width:420px}
+  .chap select{width:100%}
+  .toc{top:140px;max-height:calc(100vh - 160px)}
+  .sheet{scroll-margin-top:140px}
+}
 @media (max-width:1000px){
   .layout{grid-template-columns:1fr}
   .toc{display:none}
@@ -239,7 +249,7 @@ a.btn{color:var(--ink)}
   .bar-r .btn:not(.primary):not(.icon){display:none}
   .nav{order:3;flex-basis:100%;padding:0 0 10px}
   .sheet{scroll-margin-top:calc(116px + env(safe-area-inset-top,0px))}
-  .chap{flex:1;min-width:0}
+  .chap{flex:1;min-width:0;max-width:none}
   .chap select{width:100%}
   .layout{padding:18px 16px 50px}
 }
