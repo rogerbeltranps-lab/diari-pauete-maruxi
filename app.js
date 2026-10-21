@@ -381,6 +381,11 @@ function selectedEntries() {
   if (printSel) return printSel.entries;
   return newestFirst(bookEntries());
 }
+/* on opening, go straight to the last day written (past the cover and the chapter page) */
+function showLatest() {
+  const e = selectedEntries().find(e => !e.chapter), s = e && book.querySelector(`.sheet[data-eid="${e.id}"]`);
+  if (s) { s.scrollIntoView({ block: 'start' }); markActive(e.id) }
+}
 
 /* ================= page building ================= */
 const chars = e => e.paras.reduce((a, p) => a + p.length, 0);
@@ -1494,6 +1499,7 @@ async function boot() {
     }
     data = await readData();
     render();
+    showLatest();
     await fixFotosPapis();
     await fixStranded();
     const rs = JSON.parse(ls.get('diari.resume') || 'null');
