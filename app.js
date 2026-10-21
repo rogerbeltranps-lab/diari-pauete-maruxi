@@ -366,11 +366,20 @@ function groupsOf(entries) {
   return gs.filter(g => g.entries.length);
 }
 let printSel = null; // {entries, label, cover} while printing a custom selection
-function selectedEntries() {
-  if (printSel) return printSel.entries;
+function bookEntries() {
   if (group === 'all') return data.entries;
   const g = groupsOf(data.entries).find(g => g.key === group);
   return g ? g.entries : data.entries;
+}
+/* on screen the newest days come first (the last day written is on top): newest year first, and inside each
+   chapter its page first and then the days from the newest; the printed book keeps the oldest first */
+function newestFirst(ents) {
+  return groupsOf(ents).map((g, i) => ({ g, i, y: g.key === 'inici' ? -1 : yearOf(g.title) })).sort((a, b) => b.y - a.y || a.i - b.i)
+    .flatMap(({ g }) => g.entries[0].chapter ? [g.entries[0], ...g.entries.slice(1).reverse()] : g.entries.slice().reverse());
+}
+function selectedEntries() {
+  if (printSel) return printSel.entries;
+  return newestFirst(bookEntries());
 }
 
 /* ================= page building ================= */
@@ -429,8 +438,9 @@ function pageHTML(p, num, ents) {
   if (p.kind === 'cover') {
     const first = ents.flatMap(e => e.photos || [])[0];
     const d = ents.filter(e => !e.chapter).map(e => e.date).filter(Boolean);
+    if (dateKey(d[0]) > dateKey(d[d.length - 1])) d.reverse();
     const range = d.length > 1 ? `${d[0]} — ${d[d.length - 1]}` : (d[0] || '');
-    const sub = printSel ? printSel.label : group !== 'all' ? (groupsOf(data.entries).find(g => g.key === group) || {}).title : data.meta.sub;
+    const sub = printSel && !printSel.auto ? printSel.label : group !== 'all' ? (groupsOf(data.entries).find(g => g.key === group) || {}).title : data.meta.sub;
     return `<div class="page p-cover ${first ? '' : 'noimg'}">${first ? `<div class="cimg">${imgTag(first)}</div>` : ''}
       <div class="ct"><h1>${esc(data.meta.title || DEFAULT_TITLE)}</h1>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>
       ${range ? `<div class="range">${esc(range)}</div>` : ''}</div>`;
@@ -509,14 +519,15 @@ function renderNav() {
   if (group !== 'all' && !gs.some(g => g.key === group)) group = 'all';
   const sorted = gs.map((g, i) => ({ g, i, y: g.key === 'inici' ? -1 : yearOf(g.title) })).sort((a, b) => b.y - a.y || a.i - b.i).map(x => x.g);
   const opt = (key, title) => `<option value="${esc(key)}"${group === key ? ' selected' : ''}>${esc(title)}</option>`;
-  nav.innerHTML = `<label class="chap"><span class="vh">Capítol</span><select id="f-chap">${opt('all', 'Tot el llibre')}${gs.length > 1 ? sorted.map(g => opt(g.key, g.title)).join('') : ''}</select></label>`;
+  nav.innerHTML = `<label class="chap"><span class="vh">Capítol</span><select id="f-chap">${opt('all', 'Tot el llibre')}${gs.length > 1 ? sorted.map(g => opt(g.key, g.title)).join('') : ''}</select></label>`
+    + `<button class="btn goday" type="button" data-act="goday"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M8 3v4M16 3v4"/></svg>Anar al dia</button>`;
   $('#f-chap').onchange = ev => { group = ev.target.value; ls.set('diari.group', group); $('#f-search').value = ''; render(); window.scrollTo(0, 0) };
 }
 /* entry list (middle column): click jumps to the entry's page */
 const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 function renderList() {
   const q = norm($('#f-search').value.trim());
-  const ents = q ? data.entries.filter(e => norm([e.date, e.title, ...(e.paras || [])].join(' ')).includes(q)) : selectedEntries();
+  const ents = q ? newestFirst(data.entries).filter(e => norm([e.date, e.title, ...(e.paras || [])].join(' ')).includes(q)) : selectedEntries();
   const g = groupsOf(data.entries).find(g => g.key === group);
   const head = q ? 'Resultats' : group === 'all' ? 'Tot el llibre' : (g ? g.title : 'Tot el llibre');
   const nDays = ents.filter(e => !e.chapter).length;
@@ -550,6 +561,38 @@ function gotoEntry(id) {
   if (!s) return;
   s.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
   markActive(id);
+}
+/* "Anar al dia": pick a date (or type words) and jump straight to that day's page */
+const isoOf = k => `${Math.floor(k / 1e4)}-${String(Math.floor(k / 100) % 100).padStart(2, '0')}-${String(k % 100).padStart(2, '0')}`;
+function openGoDay() {
+  const a = data.entries.find(e => e.id === activeId), k = a && dateKey(a.date || a.title);
+  const now = new Date(), val = k && k % 100 ? isoOf(k) : isoOf(now.getFullYear() * 1e4 + (now.getMonth() + 1) * 100 + now.getDate());
+  openCard(`<h3>Anar al dia</h3>
+  <div class="fld"><label for="g-date">Tria el dia</label><input type="date" id="g-date" value="${val}"></div>
+  <div class="fld"><label for="g-q">O busca per paraules</label><input type="search" id="g-q" placeholder="Un nom, un lloc…" autocomplete="off"></div>
+  <div class="gd-list" id="g-list"></div>
+  <div class="actions"><button class="btn" data-act="close">Tanca</button></div>`);
+  $('#g-date').onchange = $('#g-date').oninput = () => { $('#g-q').value = ''; drawGoDay() };
+  $('#g-q').oninput = drawGoDay;
+  drawGoDay();
+}
+function drawGoDay() {
+  const q = norm($('#g-q').value.trim()), v = $('#g-date').value, days = data.entries.filter(e => !e.chapter);
+  let ents, note = '';
+  if (q) { ents = days.filter(e => norm([e.date, e.title, ...(e.paras || [])].join(' ')).includes(q)).slice(0, 40); if (!ents.length) note = 'No hi ha cap dia amb aquestes paraules.' }
+  else if (!v) { ents = []; note = 'Tria un dia al calendari.' }
+  else {
+    const want = +v.replace(/-/g, ''), keyed = days.map(e => ({ e, k: dateKey(e.date || e.title) })).filter(x => x.k);
+    ents = keyed.filter(x => x.k === want).map(x => x.e);
+    if (!ents.length) {
+      const dist = x => Math.abs(new Date(isoOf(x.k)) - new Date(v)) || 0;
+      ents = keyed.filter(x => x.k % 100).sort((a, b) => dist(a) - dist(b)).slice(0, 4).map(x => x.e).sort((a, b) => dateKey(a.date || a.title) - dateKey(b.date || b.title));
+      note = ents.length ? 'Aquest dia no hi ha res escrit. Els dies més propers:' : 'Encara no hi ha dies escrits.';
+    }
+  }
+  $('#g-list').innerHTML = (note ? `<p class="muted">${esc(note)}</p>` : '') + ents.map(e => `<button class="gd" type="button" data-act="godayto" data-id="${e.id}">
+    <span class="gd-d">${esc(e.date || '')}${chOf.get(e.id) ? ' · ' + esc(chOf.get(e.id)) : ''}</span>
+    <span class="gd-h">${esc(e.title || ((e.paras || [])[0] || '').slice(0, 80) || 'Sense títol')}</span></button>`).join('');
 }
 function render() {
   $('#bar').hidden = false; $('#s-loading').hidden = true; $('#layout').hidden = false;
@@ -1126,6 +1169,7 @@ function openPrint() {
       <label class="chk"><input type="radio" name="pmode" value="range"> <span><b>Entre dues dates</b></span></label>
       <div class="row" style="padding-left:26px"><div class="fld"><label for="p-from">Des de</label><select id="p-from">${opts}</select></div><div class="fld"><label for="p-to">Fins a</label><select id="p-to">${opts}</select></div></div>
       <label class="chk"><input type="checkbox" id="p-cover" checked> <span>Amb portada</span></label>
+      <div class="fld"><label for="p-order">Ordre dels dies</label><select id="p-order"><option value="old">Dels més antics als més nous</option><option value="new">Dels més nous als més antics</option></select></div>
     </div>
     ${hist ? `<p class="muted">Últimes impressions:</p><ul class="muted" style="margin:0;padding-left:20px;line-height:1.6">${hist}</ul>` : ''}
     <p class="muted">A la finestra d'impressió: mida <b>A4</b>, marges <b>Cap</b>, activa <b>Gràfics de fons</b>. Per fer un PDF, tria «Desa com a PDF».</p>
@@ -1150,6 +1194,7 @@ function chosenPrint() {
     let a = +$('#p-from').value, b = +$('#p-to').value; if (a > b) [a, b] = [b, a];
     ents = data.entries.slice(a, b + 1); label = `${data.entries[a].date || ''} — ${data.entries[b].date || ''}`;
   }
+  if ($('#p-order') && $('#p-order').value === 'new') ents = newestFirst(ents);
   return { entries: ents, label, cover: $('#p-cover') ? $('#p-cover').checked : true };
 }
 async function doPrint() {
@@ -1261,6 +1306,8 @@ document.addEventListener('click', async ev => {
     if (a === 'close') closeCard();
     else if (a === 'login') login();
     else if (a === 'goto') gotoEntry(b.dataset.id);
+    else if (a === 'goday') openGoDay();
+    else if (a === 'godayto') { closeCard(); gotoEntry(b.dataset.id) }
     else if (a === 'new') { closeCard(); openEditor(null) }
     else if (a === 'import') { closeCard(); $('#f-docx').click() }
     else if (a === 'docsimport') openDocsImport();
@@ -1347,7 +1394,10 @@ document.addEventListener('visibilitychange', async () => {
   lastCheck = Date.now();
   try { const d = await readData(); if ((d.updated || 0) !== (data.updated || 0)) { data = d; render() } } catch (e) {}
 });
-window.addEventListener('beforeprint', () => book.querySelectorAll('img[data-pid]').forEach(i => { if (i.dataset.done !== 'full') loadImg(i, true) }));
+/* printing straight from the browser (without «Imprimir») also gives the book oldest first */
+window.addEventListener('beforeprint', () => { if (!printSel && data.entries.length) { printSel = { entries: bookEntries(), cover: true, auto: true }; render() } });
+window.addEventListener('afterprint', () => { if (printSel && printSel.auto) { printSel = null; render() } });
+window.addEventListener('beforeprint', () =>book.querySelectorAll('img[data-pid]').forEach(i => { if (i.dataset.done !== 'full') loadImg(i, true) }));
 
 /* one-off: make small copies of photos that don't have one yet (run from the console as diariMakeThumbs()) */
 async function makeMissingThumbs(onProgress) {

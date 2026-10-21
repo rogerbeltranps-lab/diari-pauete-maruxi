@@ -29,7 +29,14 @@ svg{flex:none}
 .brand{display:flex;align-items:center;gap:12px;flex:none}
 .logo{width:44px;height:44px;border-radius:50%;display:block}
 .brand-name{font-family:var(--f-display);font-size:22px;line-height:1;white-space:nowrap}
-.nav{display:flex;flex:1;min-width:0}
+.nav{display:flex;flex:1;min-width:0;gap:8px;align-items:center}
+.goday{flex:none;white-space:nowrap}
+.gd-list{display:flex;flex-direction:column;gap:6px;max-height:min(42vh,380px);overflow-y:auto;margin:4px 0 6px;-webkit-overflow-scrolling:touch}
+.gd-list p{margin:4px 0}
+.gd{display:flex;flex-direction:column;gap:2px;text-align:left;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:12px;padding:10px 14px;font:inherit}
+.gd:hover{border-color:var(--ink)}
+.gd-d{font-size:13px;color:var(--muted)}
+.gd-h{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chap{position:relative;display:block;max-width:100%}
 .chap::after{content:"";position:absolute;right:15px;top:50%;width:7px;height:7px;border:solid var(--ink);border-width:0 1.8px 1.8px 0;transform:translateY(-70%) rotate(45deg);pointer-events:none}
 .chap select{appearance:none;-webkit-appearance:none;max-width:100%;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:16px;padding:8px 40px 8px 16px;border-radius:999px;text-overflow:ellipsis;cursor:pointer}
@@ -190,7 +197,7 @@ a.btn{color:var(--ink)}
 .menu .btn{justify-content:flex-start;border-radius:12px;padding:12px 14px}
 .fld{display:flex;flex-direction:column;gap:6px}
 .fld label{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.fld input[type=text],.fld input[type=email],.fld textarea,.fld input[type=date],.fld select{font-size:16px;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%}
+.fld input[type=text],.fld input[type=email],.fld textarea,.fld input[type=date],.fld input[type=search],.fld select{font-size:16px;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%}
 .fld textarea{min-height:200px;resize:vertical;font-family:var(--f-body);font-size:17px;line-height:1.5}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
 .row>.fld{flex:1 1 200px;min-width:0}
@@ -231,7 +238,9 @@ a.btn{color:var(--ink)}
   .bar-r{margin-left:auto}
   .bar-r .btn:not(.primary):not(.icon){display:none}
   .nav{order:3;flex-basis:100%;padding:0 0 10px}
-  .chap,.chap select{width:100%}
+  .sheet{scroll-margin-top:calc(116px + env(safe-area-inset-top,0px))}
+  .chap{flex:1;min-width:0}
+  .chap select{width:100%}
   .layout{padding:18px 16px 50px}
 }
 @media (max-width:520px){ .bar .btn.primary span{display:none} .bar .btn.primary{padding:9px} .bar .btn.primary svg{width:20px;height:20px} }
