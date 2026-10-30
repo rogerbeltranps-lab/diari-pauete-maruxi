@@ -7,6 +7,8 @@ const OLD_NAME = 'Diari Pauete i Mariuxi'; // nom antic: carpeta i títol de dia
 const FOLDER_NAME = CFG.folderName || 'Diari de Pauete i Maruxi';
 const DEFAULT_TITLE = 'Diari de Pauete i Maruxi';
 const SCOPE = 'https://www.googleapis.com/auth/drive';
+const PICK_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly'; // asked for only when «Tria de Google Fotos» is first used
+const PICKER = 'https://photospicker.googleapis.com/v1';
 const DRIVE = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 const REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
@@ -30,7 +32,7 @@ function readHash() {
   history.replaceState(null, '', location.pathname + location.search);
   if (p.get('error')) return { error: p.get('error') };
   if (p.get('state') !== ls.get('diari.state')) return { error: 'state' };
-  const tok = { t: p.get('access_token'), exp: Date.now() + (+p.get('expires_in') || 3600) * 1000 };
+  const tok = { t: p.get('access_token'), exp: Date.now() + (+p.get('expires_in') || 3600) * 1000, s: p.get('scope') || '' };
   ls.set('diari.tok', JSON.stringify(tok));
   return { ok: true };
 }
@@ -38,16 +40,17 @@ function token(minLeftSec = 60) {
   try { const t = JSON.parse(ls.get('diari.tok') || 'null'); if (t && t.exp - Date.now() > minLeftSec * 1000) return t.t } catch (e) {}
   return null;
 }
-function login() {
+const canPick = () => { try { return (JSON.parse(ls.get('diari.tok') || '{}').s || '').includes(PICK_SCOPE) } catch (e) { return false } };
+function login(withPhotos) {
   const st = uid(); ls.set('diari.state', st);
-  const q = { client_id: CFG.clientId, redirect_uri: REDIRECT, response_type: 'token', scope: SCOPE, include_granted_scopes: 'true', state: st };
+  const q = { client_id: CFG.clientId, redirect_uri: REDIRECT, response_type: 'token', scope: withPhotos || canPick() ? SCOPE + ' ' + PICK_SCOPE : SCOPE, include_granted_scopes: 'true', state: st };
   const hint = ls.get('diari.hint'); if (hint) q.login_hint = hint;
   location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams(q);
   throw new Redirecting();
 }
 /* «Sortir» also forgets the photos and text this device kept, so the next person on it sees nothing */
 async function logout() {
-  ['diari.tok', 'diari.hint', 'diari.folder', 'diari.was', 'diari.draft', 'diari.resume', 'diari.group'].forEach(k => ls.del(k));
+  ['diari.tok', 'diari.hint', 'diari.folder', 'diari.was', 'diari.draft', 'diari.resume', 'diari.group', 'diari.gpick'].forEach(k => ls.del(k));
   try { await caches.delete('diari-fotos') } catch (e) {}
   location.reload();
 }
@@ -940,7 +943,7 @@ function editorHTML(e, draft, cover) {
   <div class="fld"><label for="f-title">${e && e.chapter ? 'Títol del capítol' : 'Títol (opcional)'}</label><input type="text" id="f-title" value="${esc(title)}"></div>
   <div class="fld"><label for="f-text">${e && e.chapter ? 'Text (opcional)' : 'El que ha passat'}</label><textarea id="f-text" placeholder="Escriu aquí. Deixa una línia en blanc per començar un paràgraf nou.">${esc(text)}</textarea></div>
   <div class="fld"><label>Fotos</label><p class="hint">Toca «Gran» per fer una foto més petita al llibre. Amb ‹ › canvies l'ordre.</p><div class="thumbs" id="thumbs"></div><input class="hid" type="file" id="f-photos" accept="image/*" multiple>
-    <div class="gphotos"><a class="btn" href="https://photos.google.com/" target="_blank" rel="noopener">Obre Google Fotos</a><p class="hint">A l'ordinador: a Google Fotos tria les fotos i baixa-les (tecles Maj+D). Després prem «+ Afegeix fotos» i busca-les a <b>Baixades</b>, o arrossega-les fins aquí.</p></div></div>
+    <div class="gphotos"><button class="btn" type="button" data-act="gpick">Tria de Google Fotos</button><p class="hint" id="gp-st">S'obre una finestra de Google Fotos: marca les fotos, prem «Fet» i entren aquí soles, sense baixar-les.</p></div></div>
   ${e ? '' : `<label class="chk"><input type="checkbox" id="f-chapter"> És l'inici d'un capítol nou (per exemple, un any)</label>`}
   ${e && e.chapter && /^[\w-]{20,}:/.test(e.src || '') ? `<div class="fld"><label>Google Docs</label><p class="hint">Si aquest capítol s'ha importat malament (per exemple, les fotos separades del text), es pot tornar a importar de la pestanya «${esc(e.title)}». Substitueix totes les entrades del capítol que venen del Google Docs.</p><div class="row"><button class="btn" data-act="reimport" data-id="${e.id}">Torna a importar aquest capítol</button></div></div>` : ''}
   <div class="actions"><div class="left">${e ? `<button class="btn danger" data-act="del">Esborra</button>${idx > 0 ? `<button class="btn" data-act="merge">Uneix amb l'anterior</button>` : ''}` : ''}</div>
@@ -972,6 +975,73 @@ function openEditor(e, draft, cover) {
   card.ondragover = ev => { if ([...ev.dataTransfer.types].includes('Files')) { ev.preventDefault(); hi(true) } };
   card.ondragleave = ev => { if (!card.contains(ev.relatedTarget)) hi(false) };
   card.ondrop = ev => { ev.preventDefault(); hi(false); if (edit) addFiles([...ev.dataTransfer.files].filter(f => /^image\//.test(f.type) || /\.(heic|heif)$/i.test(f.name))) };
+}
+/* Google Photos Picker: a Google window where she ticks photos, and they come straight into the editor, no downloading.
+   The first time, Google asks for permission to see the photos she picks (a trip to Google and back; the text is kept as a draft). */
+let gpRun = 0;
+const gpSay = (msg, html) => { const st = $('#gp-st'); if (st) st[html ? 'innerHTML' : 'textContent'] = msg };
+async function gpGet(url, opts = {}) {
+  const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + ensureToken(60) } });
+  if (r.status === 401) { ls.del('diari.tok'); saveDraft(); login() }
+  if (!r.ok) { const txt = await r.text().catch(() => ''); const err = new Error('Google Fotos ' + r.status + ' ' + txt.slice(0, 300)); err.off = /SERVICE_DISABLED|has not been used|is disabled/i.test(txt); throw err }
+  return r;
+}
+/* the photo itself: key in the header, or else in the address in case the browser blocks the first way */
+async function gpBytes(item, t) {
+  const u = item.mediaFile.baseUrl + '=w2400-h2400';
+  for (const go of [() => fetch(u, { headers: { Authorization: 'Bearer ' + t } }), () => fetch(u + '?access_token=' + encodeURIComponent(t))]) {
+    try { const r = await go(); if (r.ok) { const b = await r.blob(); if (/^image\//.test(b.type)) return b } } catch (e) { console.warn('gfotos', e) }
+  }
+  return null;
+}
+async function gpPick() {
+  if (!edit) return;
+  if (!canPick()) {
+    if (ls.get('diari.gpick')) { ls.del('diari.gpick'); gpSay('Google no ha donat permís per veure les fotos. Torna a prémer el botó i, a la pantalla de Google, marca la casella de Google Fotos.'); return }
+    saveDraft(); ls.set('diari.gpick', '1');
+    try { login(true) } catch (e) { return }
+  }
+  ls.del('diari.gpick');
+  const run = ++gpRun, ed = edit;
+  const win = window.open('about:blank', 'gfotos', 'width=1000,height=760'); // opened now, while it still counts as her click, so it isn't blocked
+  let sid = null;
+  try {
+    gpSay('Obrint Google Fotos…');
+    const ses = await (await gpGet(`${PICKER}/sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json();
+    sid = ses.id;
+    if (win && !win.closed) win.location = ses.pickerUri + '/autoclose';
+    gpSay(`A la finestra de Google Fotos, marca les fotos i prem «Fet». <a href="${esc(ses.pickerUri)}/autoclose" target="gfotos">No veus la finestra?</a> <button class="btn" type="button" data-act="gpstop">Cancel·la</button>`, true);
+    const pc = ses.pollingConfig || {}, every = Math.max(2000, (parseFloat(pc.pollInterval) || 3) * 1000), end = Date.now() + Math.min(1800, parseFloat(pc.timeoutIn) || 1200) * 1000;
+    let s = ses;
+    while (!s.mediaItemsSet) {
+      await sleep(every);
+      if (run !== gpRun || edit !== ed) return;
+      if (Date.now() > end) { gpSay("S'ha acabat el temps. Torna a prémer «Tria de Google Fotos»."); return }
+      s = await (await gpGet(`${PICKER}/sessions/${sid}`)).json();
+    }
+    const items = []; let page = '';
+    do {
+      const r = await (await gpGet(`${PICKER}/mediaItems?` + qs({ sessionId: sid, pageSize: 100, ...(page ? { pageToken: page } : {}) }))).json();
+      items.push(...(r.mediaItems || [])); page = r.nextPageToken || '';
+    } while (page);
+    const photos = items.filter(it => it.type !== 'VIDEO' && it.mediaFile);
+    let bad = 0, n = 0;
+    for (const it of photos) {
+      if (run !== gpRun || edit !== ed) return;
+      gpSay(`Portant les fotos: ${++n} de ${photos.length}…`);
+      const b = await gpBytes(it, ensureToken(60)), r = b && await shrinkFile(b);
+      if (r) { ed.photos.push({ tmp: true, ...r, url: URL.createObjectURL(r.blob) }); drawThumbs() } else bad++;
+    }
+    const ok = photos.length - bad, vids = items.length - photos.length;
+    gpSay([ok ? `${ok === 1 ? 'Afegida 1 foto' : `Afegides ${ok} fotos`} de Google Fotos. Prem «Desa» per guardar-les.` : "No s'ha afegit cap foto.",
+      vids ? `Els vídeos no es poden posar al llibre (${vids}).` : '', bad ? `${bad} fotos no s'han pogut portar.` : ''].filter(Boolean).join(' '));
+  } catch (err) {
+    if (err instanceof Redirecting) return;
+    console.error(err); if (win && !win.closed && !sid) win.close();
+    gpSay(err.off ? 'Google Fotos encara no està activat per a aquesta app. Avisa el Roger.' : "No s'ha pogut obrir Google Fotos (" + String(err.message || err).slice(0, 120) + ').');
+  } finally {
+    if (sid) gpGet(`${PICKER}/sessions/${sid}`, { method: 'DELETE' }).catch(() => {});
+  }
 }
 async function saveEditor() {
   const paras = $('#f-text').value.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
@@ -1369,6 +1439,8 @@ document.addEventListener('click', async ev => {
     else if (a === 'printyes') finishPrint(true);
     else if (a === 'printno') finishPrint(false);
     else if (a === 'addph') $('#f-photos').click();
+    else if (a === 'gpick') gpPick();
+    else if (a === 'gpstop') { gpRun++; gpSay('Cancel·lat.') }
     else if (a === 'rm') { const p = edit.photos.splice(+b.dataset.i, 1)[0]; if (!p.tmp) edit.removed.push(p.id); drawThumbs() }
     else if (a === 'left' || a === 'right') { const i = +b.dataset.i, j = a === 'left' ? i - 1 : i + 1; if (j < 0 || j >= edit.photos.length) return; [edit.photos[j], edit.photos[i]] = [edit.photos[i], edit.photos[j]]; drawThumbs() }
     else if (a === 'size') { const p = edit.photos[+b.dataset.i], s = NEXT_SIZE[p.s || 'g']; if (s === 'g') delete p.s; else p.s = s; drawThumbs() }
@@ -1506,7 +1578,7 @@ async function boot() {
     if (rs) { ls.del('diari.resume'); const imp = (data.meta && data.meta.imported) || {}; const tabs = rs.tabs.filter(t => !imp[rs.doc + ':' + t]); if (tabs.length) { doDocImport(rs.doc, tabs); return } }
     setTimeout(() => backupPending(false), 4000);
     const draft = JSON.parse(ls.get('diari.draft') || 'null');
-    if (draft) { ls.del('diari.draft'); const e = draft.id ? data.entries.find(x => x.id === draft.id) : null; openEditor(e, draft); toast("He recuperat el text que estaves escrivint. Si hi havia fotos noves, torna-les a afegir.", 6000) }
+    if (draft) { ls.del('diari.draft'); const e = draft.id ? data.entries.find(x => x.id === draft.id) : null; openEditor(e, draft); if (ls.get('diari.gpick') && canPick()) { ls.del('diari.gpick'); gpSay('Ja tens permís. Prem «Tria de Google Fotos» per triar les fotos.') } toast("He recuperat el text que estaves escrivint. Si hi havia fotos noves, torna-les a afegir.", 6000) }
   } catch (err) {
     if (err instanceof Redirecting) return;
     console.error(err);
