@@ -531,6 +531,14 @@ function renderNav() {
     + `<button class="btn goday" type="button" data-act="goday"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M8 3v4M16 3v4"/></svg>Anar al dia</button>`;
   $('#f-chap').onchange = ev => { group = ev.target.value; ls.set('diari.group', group); $('#f-search').value = ''; render(); window.scrollTo(0, 0) };
 }
+/* a bare numeric date ("7/10/2026", "10/2026") written out long, like the newer entries; any other text is kept */
+function longDate(t) {
+  const m = String(t || '').trim().match(/^(?:(\d{1,2})\s*[\/.\-]\s*)?(\d{1,2})\s*[\/.\-]\s*(\d{4})$/);
+  if (!m || +m[2] < 1 || +m[2] > 12) return t;
+  const d = new Date(+m[3], +m[2] - 1, +m[1] || 1, 12);
+  if (m[1] && d.getDate() !== +m[1]) return t;
+  try { return new Intl.DateTimeFormat(DATE_LOCALE, m[1] ? { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' } : { month: 'long', year: 'numeric' }).format(d) } catch (e) { return t }
+}
 /* entry list (middle column): click jumps to the entry's page */
 const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 function renderList() {
@@ -544,8 +552,8 @@ function renderList() {
       const pg = pageNo.has(e.id) ? `<span class="li-p">${pageNo.get(e.id)}</span>` : '';
       if (e.chapter) return `<button class="li-ch" type="button" data-act="goto" data-id="${e.id}"><span>${esc(e.title || 'Capítol')}</span>${pg}</button>`;
       return `<button class="li" type="button" data-act="goto" data-id="${e.id}">
-        <span class="li-row"><span class="li-h">${esc(e.title || e.date || ((e.paras || [])[0] || '').slice(0, 60) || 'Sense títol')}</span><span class="li-dots"></span>${pg}</span>
-        ${e.title && e.date ? `<span class="li-d">${esc(e.date)}</span>` : ''}</button>`;
+        <span class="li-row"><span class="li-h">${esc(longDate(e.title || e.date) || ((e.paras || [])[0] || '').slice(0, 60) || 'Sense títol')}</span><span class="li-dots"></span>${pg}</span>
+        ${e.title && e.date ? `<span class="li-d">${esc(longDate(e.date))}</span>` : ''}</button>`;
     }).join('') : `<p class="muted li-none">${q ? 'No hi ha cap entrada amb aquestes paraules.' : 'Encara no hi ha entrades.'}</p>`);
   listEl.querySelectorAll('img[data-pid]').forEach(img => { if (mem.has(img.dataset.pid)) loadImg(img); else io.observe(img) });
   markActive(activeId);
