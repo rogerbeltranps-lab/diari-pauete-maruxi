@@ -440,11 +440,23 @@ function gridHTML(P, variant) {
   } else areas = '"a b" "c d"';
   const ncols = areas.split('"')[1].split(' ').length;
   const st = `grid-template-areas:${areas};grid-template-columns:${cols || `repeat(${ncols},1fr)`};${rows ? `grid-template-rows:${rows};` : ''}`;
-  return `<div class="ph" style='${st}'>${P.map((p, i) => `<figure style="grid-area:${'abcd'[i]}" data-r="${(p.w && p.h) ? (p.w / p.h).toFixed(3) : 1}"${p.s ? ` class="s-${p.s}"` : ''}>${imgTag(p)}</figure>`).join('')}</div>`;
+  return `<div class="ph" style='${st}'>${P.map((p, i) => `<figure style="grid-area:${'abcd'[i]}" data-r="${(p.w && p.h) ? (p.w / p.h).toFixed(3) : 1}"${p.s ? ` class="s-${p.s}"` : ''}>${imgTag(p)}<button type="button" class="phc" data-act="phcover" data-pid="${esc(p.id)}" title="Posa-la de portada" aria-label="Posa aquesta foto de portada">★</button></figure>`).join('')}</div>`;
 }
+/* cover photo chosen by hand: each year chapter keeps its own (chapter.cover = photo id), the whole book
+   another (meta.cover); a chosen photo that no longer exists, or none chosen, falls back to the first photo */
+function chapterOf(id) {
+  let ch = null; for (const x of data.entries) { if (x.chapter) ch = x; if (x.id === id) return ch } return null;
+}
+function entryOfPhoto(pid) { return data.entries.find(x => (x.photos || []).some(p => p.id === pid)) }
+function coverChapter() {
+  if (printSel && !printSel.auto) { const chs = printSel.entries.filter(x => x.chapter); return chs.length === 1 ? chs[0] : null }
+  return group !== 'all' ? data.entries.find(x => x.id === group && x.chapter) || null : null;
+}
+function photoById(pid) { if (!pid) return null; for (const x of data.entries) for (const p of x.photos || []) if (p.id === pid) return p; return null }
 function pageHTML(p, num, ents) {
   if (p.kind === 'cover') {
-    const first = ents.flatMap(e => e.photos || [])[0];
+    const ch = coverChapter();
+    const first = photoById(ch ? ch.cover : data.meta.cover) || ents.flatMap(e => e.photos || [])[0];
     const d = ents.filter(e => !e.chapter).map(e => e.date).filter(Boolean);
     if (dateKey(d[0]) > dateKey(d[d.length - 1])) d.reverse();
     const range = d.length > 1 ? `${d[0]} — ${d[d.length - 1]}` : (d[0] || '');
@@ -1160,7 +1172,7 @@ let layEdit = null;
 function openLayout(e) {
   const l = e.lay || {}, n = (e.photos || []).length;
   const keep = layEdit && layEdit.id === e.id ? layEdit.before : JSON.stringify({ lay: e.lay || null, variant: e.variant || 0, photos: e.photos });
-  layEdit = { id: e.id, before: keep };
+  layEdit = { id: e.id, before: keep, covs: layEdit && layEdit.id === e.id ? layEdit.covs : [] };
   const seg = (name, val, opts) => `<div class="seg" role="group">${opts.map(([v, t]) => `<button type="button" class="${String(val) === String(v) ? 'on' : ''}" data-act="lay" data-k="${name}" data-v="${v}">${t}</button>`).join('')}</div>`;
   openCard(`<h3>Fotos de la pàgina</h3>
     <p>${esc(e.date || e.title || '')} · ${n} foto${n === 1 ? '' : 's'}. Els canvis es veuen al llibre de seguida.</p>
@@ -1169,16 +1181,38 @@ function openLayout(e) {
     <div class="fld"><label>Fotos a les pàgines següents</label>${seg('per', l.per || 'auto', [['auto', 'Auto'], [1, '1'], [2, '2'], [3, '3'], [4, '4']])}</div>
     <div class="fld"><label>Com es veuen</label>${seg('fit', l.fit || 'auto', [['auto', 'Senceres'], ['cover', 'Omplen el requadre (es retallen)'], ['contain', 'Senceres, amb fons']])}</div>
     <div class="fld"><label>On van les fotos</label>${seg('variant', e.variant || 0, [[0, 'Sota el text'], [1, 'Sobre el text']])}</div>
-    ${n > 1 ? `<div class="fld"><label>Ordre (la primera és la més gran)</label><div class="thumbs" id="lthumbs"></div></div>` : ''}
+    ${n ? `<div class="fld"><label>${n > 1 ? 'Ordre (la primera és la més gran). ★ la posa de portada' : '★ posa la foto de portada'}</label><div class="thumbs" id="lthumbs"></div></div>` : ''}
     <div class="actions"><button class="btn" data-act="layundo">Desfés</button><button class="btn primary" data-act="laysave">Fet</button></div>`, true);
   drawLayThumbs(); jumpTo(e.id);
 }
 function drawLayThumbs() {
   const box = $('#lthumbs'); if (!box) return;
   const e = data.entries.find(x => x.id === layEdit.id), n = e.photos.length;
-  box.innerHTML = e.photos.map((p, i) => `<div class="thumb"><div class="th-img"><img data-tpid="${esc(p.id)}" src="${mem.get(p.id) || ''}" alt="Foto ${i + 1}"><span class="th-n">${i + 1}</span></div>
+  box.innerHTML = e.photos.map((p, i) => `<div class="thumb"><div class="th-img"><img data-tpid="${esc(p.id)}" src="${mem.get(p.id) || ''}" alt="Foto ${i + 1}"><span class="th-n">${i + 1}</span><button type="button" class="th-cov${isCover(p.id) ? ' on' : ''}" data-act="phcover" data-pid="${esc(p.id)}" title="Posa-la de portada" aria-label="Posa la foto ${i + 1} de portada">★</button></div>
     <div class="th-ctl"><button type="button" data-act="layleft" data-i="${i}" aria-label="Mou la foto ${i + 1} abans"${i ? '' : ' disabled'}>‹</button><span class="th-sp"></span><button type="button" data-act="layright" data-i="${i}" aria-label="Mou la foto ${i + 1} després"${i < n - 1 ? '' : ' disabled'}>›</button></div></div>`).join('');
   box.querySelectorAll('img[data-tpid]').forEach(img => { if (!img.getAttribute('src')) photoURL(img.dataset.tpid).then(u => img.src = u).catch(() => {}) });
+}
+const isCover = pid => data.meta.cover === pid || data.entries.some(x => x.chapter && x.cover === pid);
+/* «Posa-la de portada»: the year's cover (the chapter the photo is in) or the whole book's */
+function openPhCover(pid) {
+  const e = entryOfPhoto(pid); if (!e) return; const ch = chapterOf(e.id);
+  const now = t => t ? ' <i>(ja ho és)</i>' : '';
+  openCard(`<h3>Foto de portada</h3>
+    <div class="phc-prev"><img data-tpid="${esc(pid)}" src="${mem.get(pid) || ''}" alt=""></div>
+    <p>On vols aquesta foto de portada?</p>
+    <div class="menu">${ch ? `<button class="btn primary" data-act="setcover" data-pid="${esc(pid)}" data-ch="${esc(ch.id)}">Portada de «${esc(ch.title || 'Capítol')}»${now(ch.cover === pid)}</button>` : ''}
+    <button class="btn${ch ? '' : ' primary'}" data-act="setcover" data-pid="${esc(pid)}" data-ch="">Portada de tot el llibre${now(data.meta.cover === pid)}</button></div>
+    <div class="actions"><button class="btn" data-act="${layEdit ? 'covback' : 'close'}">Cancel·la</button></div>`, !!layEdit);
+  const img = card.querySelector('img[data-tpid]'); if (!img.getAttribute('src')) photoURL(pid).then(u => img.src = u).catch(() => {});
+}
+function applyCover(d, chId, pid) { if (chId) { const c = d.entries.find(x => x.id === chId); if (c) { if (pid) c.cover = pid; else delete c.cover } } else if (pid) d.meta.cover = pid; else delete d.meta.cover }
+async function setCover(chId, pid) {
+  const ch = chId && data.entries.find(x => x.id === chId), where = ch ? `de «${ch.title || 'Capítol'}»` : 'de tot el llibre';
+  if (layEdit) { // inside «Fotos»: kept with the other changes, saved with «Fet», undone with «Desfés»
+    layEdit.covs.push({ ch: chId, pid, old: ch ? ch.cover : data.meta.cover }); applyCover(data, chId, pid);
+    const e = data.entries.find(x => x.id === layEdit.id); render(); openLayout(e); toast('Portada ' + where + ' triada. Prem «Fet» per desar-la.', 4500); return;
+  }
+  busy('Desant'); await mutate(d => applyCover(d, chId, pid)); closeCard(); render(); toast('Fet: és la portada ' + where, 4000);
 }
 function jumpTo(id) {
   const b = book.querySelector(`[data-id="${CSS.escape(id)}"]`); if (b) b.closest('.sheet').scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -1209,7 +1243,8 @@ function openCover() {
   openCard(`<h3>Portada</h3>
   <div class="fld"><label for="c-title">Títol</label><input type="text" id="c-title" value="${esc(data.meta.title || DEFAULT_TITLE)}"></div>
   <div class="fld"><label for="c-sub">Subtítol</label><input type="text" id="c-sub" value="${esc(data.meta.sub || '')}"></div>
-  <p>La foto de la portada és la primera foto del que estàs veient. Quan tries un any, el subtítol és el nom del capítol.</p>
+  <p>Per triar la foto de la portada, prem ★ en qualsevol foto del llibre (al mòbil, al botó «Fotos» de la pàgina). Cada any pot tenir la seva, i tot el llibre una altra. Si no en tries cap, és la primera foto. Quan tries un any, el subtítol és el nom del capítol.</p>
+  ${(() => { const ch = coverChapter(), pid = ch ? ch.cover : data.meta.cover; return photoById(pid) ? `<div class="row"><button class="btn" data-act="covreset" data-ch="${ch ? esc(ch.id) : ''}">Torna a posar la primera foto${ch ? ` a «${esc(ch.title || 'Capítol')}»` : ''}</button></div>` : '' })()}
   <div class="actions"><button class="btn" data-act="close">Cancel·la</button><button class="btn primary" data-act="savecover">Desa</button></div>`);
 }
 function openShare() {
@@ -1404,14 +1439,19 @@ document.addEventListener('click', async ev => {
       const x = data.entries.find(y => y.id === layEdit.id), i = +b.dataset.i, j = a === 'layleft' ? i - 1 : i + 1;
       x.photos = x.photos.slice(); [x.photos[i], x.photos[j]] = [x.photos[j], x.photos[i]]; drawLayThumbs(); render(); jumpTo(x.id);
     }
+    else if (a === 'phcover') openPhCover(b.dataset.pid);
+    else if (a === 'setcover') await setCover(b.dataset.ch, b.dataset.pid);
+    else if (a === 'covback') openLayout(data.entries.find(y => y.id === layEdit.id));
+    else if (a === 'covreset') { const chId = b.dataset.ch; busy('Desant'); await mutate(d => applyCover(d, chId, null)); closeCard(); render(); toast('Ara la portada és la primera foto') }
     else if (a === 'layundo') {
       const x = data.entries.find(y => y.id === layEdit.id), o = JSON.parse(layEdit.before);
+      for (const c of layEdit.covs.slice().reverse()) applyCover(data, c.ch, c.old);
       if (x) { if (o.lay) x.lay = o.lay; else delete x.lay; x.variant = o.variant; x.photos = o.photos }
       layEdit = null; closeCard(); render();
     }
     else if (a === 'laysave') {
-      const x = data.entries.find(y => y.id === layEdit.id); layEdit = null; closeCard();
-      if (x) { const id = x.id, lay = x.lay, variant = x.variant || 0, photos = x.photos; busy('Desant'); await mutate(d => { const y = d.entries.find(z => z.id === id); if (y) { if (lay && Object.keys(lay).length) y.lay = lay; else delete y.lay; y.variant = variant; y.photos = photos } }); closeCard(); render(); jumpTo(id); toast('Desat') }
+      const x = data.entries.find(y => y.id === layEdit.id), covs = layEdit.covs; layEdit = null; closeCard();
+      if (x) { const id = x.id, lay = x.lay, variant = x.variant || 0, photos = x.photos; busy('Desant'); await mutate(d => { const y = d.entries.find(z => z.id === id); if (y) { if (lay && Object.keys(lay).length) y.lay = lay; else delete y.lay; y.variant = variant; y.photos = photos } covs.forEach(c => applyCover(d, c.ch, c.pid)) }); closeCard(); render(); jumpTo(id); toast('Desat') }
     }
     else if (a === 'backupinfo') openBackupInfo();
     else if (a === 'backupall') backupPending(true);
