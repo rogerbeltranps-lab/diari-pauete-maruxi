@@ -533,6 +533,20 @@ function placeEntry(entries, e, fallback, make) {
   entries.splice(at < 0 ? Math.min(fallback, entries.length) : at, 0, e);
   return ch;
 }
+/* chapters with no year in the title (a photo album like «Fotos Papis»): what goes in them stays there,
+   whatever its date */
+const freeChapters = entries => entries.filter(x => x.chapter && !yearOf(x.title));
+function chapterOf(entries, e) {
+  let ch = null;
+  for (const x of entries) { if (x === e) return ch; if (x.chapter) ch = x }
+  return null;
+}
+function putInChapter(entries, e, chId) {
+  const ci = entries.findIndex(x => x.id === chId); if (ci < 0) return false;
+  let end = entries.findIndex((x, i) => i > ci && x.chapter); if (end < 0) end = entries.length;
+  entries.splice(end, 0, e);
+  return true;
+}
 
 function renderNav() {
   const gs = groupsOf(data.entries), nav = $('#nav');
@@ -949,10 +963,13 @@ async function openBackupInfo() {
 let edit = null; // {id|null, photos:[{id,w,h}|{tmp,blob,w,h,url}], removed:[]}
 function saveDraft() {
   if (!edit || !$('#f-text')) return;
-  ls.set('diari.draft', JSON.stringify({ id: edit.id, date: ($('#f-date') || {}).value || '', title: $('#f-title').value, text: $('#f-text').value }));
+  ls.set('diari.draft', JSON.stringify({ id: edit.id, date: ($('#f-date') || {}).value || '', where: $('#f-where') ? $('#f-where').value : null, title: $('#f-title').value, text: $('#f-text').value }));
 }
 function editorHTML(e, draft, cover) {
-  const date = draft ? draft.date : e ? e.date : fmtDate(new Date().toISOString().slice(0, 10));
+  const free = freeChapters(data.entries), inFree = id => free.some(x => x.id === id);
+  const cur = e ? chapterOf(data.entries, e) : null;
+  const where = draft && draft.where != null ? draft.where : e ? (cur && inFree(cur.id) ? cur.id : '') : (inFree(group) ? group : '');
+  const date = draft ? draft.date : e ? e.date : where ? '' : fmtDate(new Date().toISOString().slice(0, 10));
   const title = draft ? draft.title : e ? e.title : '';
   const text = draft ? draft.text : e ? e.paras.join('\n\n') : '';
   const idx = e ? data.entries.indexOf(e) : -1;
@@ -960,6 +977,7 @@ function editorHTML(e, draft, cover) {
   ${cover ? `<p>L'entrada s'ha desat. És la primera d'aquest any, així que he començat el capítol «${esc(e.title)}». Tria una foto de portada per al capítol (i, si vols, unes línies).</p>` : ''}
   ${e && e.chapter ? '' : `<div class="row"><div class="fld"><label for="f-date">Data</label><input type="text" id="f-date" value="${esc(date)}"></div>
     <div class="fld" style="flex:0 1 170px"><label for="f-pick">Tria al calendari</label><input type="date" id="f-pick"></div></div>`}
+  ${e && e.chapter || !free.length ? '' : `<div class="fld"><label for="f-where">On va</label><select id="f-where"><option value="">Al capítol del seu any (segons la data)</option>${free.map(x => `<option value="${esc(x.id)}"${where === x.id ? ' selected' : ''}>Al capítol «${esc(x.title || 'Capítol')}»</option>`).join('')}</select></div>`}
   <div class="fld"><label for="f-title">${e && e.chapter ? 'Títol del capítol' : 'Títol (opcional)'}</label><input type="text" id="f-title" value="${esc(title)}"></div>
   <div class="fld"><label for="f-text">${e && e.chapter ? 'Text (opcional)' : 'El que ha passat'}</label><textarea id="f-text" placeholder="Escriu aquí. Deixa una línia en blanc per començar un paràgraf nou.">${esc(text)}</textarea></div>
   <div class="fld"><label>Fotos</label><p class="hint">Toca «Gran» per fer una foto més petita al llibre. Amb ‹ › canvies l'ordre.</p><div class="thumbs" id="thumbs"></div><input class="hid" type="file" id="f-photos" accept="image/*" multiple>
@@ -1065,7 +1083,7 @@ async function gpPick() {
 }
 async function saveEditor() {
   const paras = $('#f-text').value.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
-  const dateEl = $('#f-date'), chEl = $('#f-chapter');
+  const dateEl = $('#f-date'), chEl = $('#f-chapter'), where = $('#f-where') ? $('#f-where').value : '';
   const fields = { date: dateEl ? dateEl.value.trim() : '', title: $('#f-title').value.trim(), paras, mt: Date.now() };
   if (!fields.date && !fields.title && !paras.length && !edit.photos.length) { toast("L'entrada està buida."); return }
   const ed = edit; saveDraft();
@@ -1084,11 +1102,19 @@ async function saveEditor() {
     await mutate(d => {
       const x = ed.id && d.entries.find(y => y.id === ed.id);
       if (x) {
-        const moved = !x.chapter && fields.date !== x.date;
+        const cur = !x.chapter && chapterOf(d.entries, x), wasFree = cur && !yearOf(cur.title);
+        const moved = !x.chapter && (fields.date !== x.date || wasFree);
         Object.assign(x, fields, { photos: ph });
-        if (moved && dateKey(x.date)) { const i = d.entries.indexOf(x); d.entries.splice(i, 1); newCh = placeEntry(d.entries, x, i, true) }
+        const i = d.entries.indexOf(x);
+        if (x.chapter) { /* a chapter page stays where it is */ }
+        else if (where) { if (!cur || cur.id !== where) { d.entries.splice(i, 1); if (!putInChapter(d.entries, x, where)) d.entries.splice(i, 0, x) } }
+        else if (moved && dateKey(x.date)) { d.entries.splice(i, 1); newCh = placeEntry(d.entries, x, i, true) }
       }
-      else { const ne = { id: sid, variant: d.entries.length % 2, chapter: !!(chEl && chEl.checked), ...fields, photos: ph }; if (ne.chapter) d.entries.push(ne); else newCh = placeEntry(d.entries, ne, d.entries.length, true) }
+      else {
+        const ne = { id: sid, variant: d.entries.length % 2, chapter: !!(chEl && chEl.checked), ...fields, photos: ph };
+        if (ne.chapter) d.entries.push(ne);
+        else if (!(where && putInChapter(d.entries, ne, where))) newCh = placeEntry(d.entries, ne, d.entries.length, true);
+      }
     });
     for (const id of ed.removed) await trashFile(id);
     ls.del('diari.draft'); closeCard(); render();
@@ -1585,17 +1611,6 @@ async function fixFotosPapis() {
   } catch (err) { console.error(err) }
 }
 
-/* entries written in the app used to land at the end of the book, inside the last chapter (a photo album with
-   no year); move the ones made in the app (no import source) back to their year */
-async function fixStranded() {
-  const stranded = d => { let ch = null; return d.entries.filter(e => { if (e.chapter) { ch = e; return false } return ch && !yearOf(ch.title) && !e.src && e.mt && placeOf(d.entries, e) >= 0 }) };
-  if (!stranded(data).length) return;
-  try {
-    await mutate(d => stranded(d).forEach(e => { const i = d.entries.indexOf(e); d.entries.splice(i, 1); placeEntry(d.entries, e, i) }));
-    render();
-  } catch (err) { console.error(err) }
-}
-
 async function boot() {
   if (!CFG.clientId) { setupScreen(); return }
   const h = readHash();
@@ -1621,7 +1636,6 @@ async function boot() {
     render();
     showLatest();
     await fixFotosPapis();
-    await fixStranded();
     const rs = JSON.parse(ls.get('diari.resume') || 'null');
     if (rs) { ls.del('diari.resume'); const imp = (data.meta && data.meta.imported) || {}; const tabs = rs.tabs.filter(t => !imp[rs.doc + ':' + t]); if (tabs.length) { doDocImport(rs.doc, tabs); return } }
     setTimeout(() => backupPending(false), 4000);
