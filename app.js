@@ -84,6 +84,9 @@ async function list(q, fields = 'files(id,name,ownedByMe,modifiedTime)') {
 }
 const qName = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 const DIARI_PROP = { diari: '1' }; // marks the folders the app creates as diaries
+/* the first diary is found by its name; a prefix added in Drive to sort folders (e.g. «01 · ») is ignored */
+const DIARY_NAMES = [...new Set([FOLDER_NAME, OLD_NAME])];
+const baseName = n => String(n || '').replace(/^[\s\d.,·•:\-–—_)(\]\[]+/, '').trim();
 async function createFolder(name, parent, props) {
   const body = { name, mimeType: FOLDER_MIME }; if (parent) body.parents = [parent]; if (props) body.appProperties = props;
   const r = await getJSON(`${DRIVE}/files?fields=id&supportsAllDrives=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -106,17 +109,20 @@ async function locateFolder() {
     try { const f = await getJSON(`${DRIVE}/files/${stored}?fields=id,trashed&supportsAllDrives=true`); if (!f.trashed) { folderId = stored; await findDataFile(); return true } } catch (e) { if (e instanceof Redirecting) throw e }
     ls.del('diari.folder');
   }
-  const names = [...new Set([FOLDER_NAME, OLD_NAME])];
-  const cands = (await list(`(${names.map(n => `name='${qName(n)}'`).join(' or ')}) and mimeType='${FOLDER_MIME}' and trashed=false`))
-    .sort((a, b) => names.indexOf(a.name) - names.indexOf(b.name));
+  const names = DIARY_NAMES;
+  const cands = (await namedFolders()).sort((a, b) => names.indexOf(baseName(a.name)) - names.indexOf(baseName(b.name)));
   for (const c of cands) { folderId = c.id; if (await findDataFile()) { ls.set('diari.folder', c.id); return true } }
   if (cands[0]) { folderId = cands[0].id; ls.set('diari.folder', folderId); return true }
   folderId = null; return false;
 }
 /* every diary is its own Drive folder; the first one was found by name, new ones carry DIARI_PROP */
 async function listDiaries() {
-  const names = [...new Set([FOLDER_NAME, OLD_NAME])].map(n => `name='${qName(n)}'`).join(' or ');
-  return list(`mimeType='${FOLDER_MIME}' and trashed=false and (appProperties has { key='diari' and value='1' } or ${names})`);
+  const [marked, named] = await Promise.all([list(`mimeType='${FOLDER_MIME}' and trashed=false and appProperties has { key='diari' and value='1' }`), namedFolders()]);
+  return [...marked, ...named.filter(n => !marked.some(m => m.id === n.id))];
+}
+async function namedFolders() {
+  const q = [...DIARY_NAMES.map(n => `name='${qName(n)}'`), `name contains 'Pauete'`].join(' or ');
+  return (await list(`(${q}) and mimeType='${FOLDER_MIME}' and trashed=false`)).filter(f => DIARY_NAMES.includes(baseName(f.name)));
 }
 async function ensurePhotosFolder() {
   if (photosFolderId) return photosFolderId;
